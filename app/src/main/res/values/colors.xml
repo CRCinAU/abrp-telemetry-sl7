@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="primary">#1B6CA8</color>
+    <color name="primary_dark">#14508A</color>
+    <color name="accent">#FF6B35</color>
+    <color name="background">#F5F5F5</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="on_primary">#FFFFFF</color>
+    <color name="btn_start">#2E7D32</color>
+    <color name="btn_stop">#C62828</color>
+    <!-- Explicit text colors so system dark mode can't make them invisible -->
+    <color name="text_primary">#212121</color>
+    <color name="text_secondary">#616161</color>
+    <color name="text_hint">#9E9E9E</color>
+</resources>

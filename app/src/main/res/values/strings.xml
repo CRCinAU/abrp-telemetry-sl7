@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ABRP Telemetry</string>
+    <string name="credentials">Credentials</string>
+    <string name="user_token_hint">ABRP User Token</string>
+    <string name="user_token_helper">Get from ABRP app: Settings → Live Data → Copy Token</string>
+    <string name="validate">Validate Token</string>
+    <string name="validating">Validating…</string>
+    <string name="validating_status">Contacting ABRP server…</string>
+    <string name="token_valid">Token valid — ready to send</string>
+    <string name="set_token_first">Please set and validate your token first</string>
+    <string name="car_model_hint">Car Model</string>
+    <string name="live_vehicle_data">Live Vehicle Data</string>
+    <string name="state_of_charge">State of Charge</string>
+    <string name="speed">Speed</string>
+    <string name="charging_state">Charging</string>
+    <string name="outside_temp">Outside Temp</string>
+    <string name="odometer">Odometer</string>
+    <string name="range">Range</string>
+    <string name="gps_location">GPS</string>
+    <string name="car_api">Car API</string>
+    <string name="status">Status</string>
+    <string name="not_started">Not started</string>
+    <string name="starting">Starting telemetry service…</string>
+    <string name="start_telemetry">Start Telemetry</string>
+    <string name="stop_telemetry">Stop Telemetry</string>
+    <string name="activity_log">Activity Log</string>
+    <string name="clear">Clear</string>
+</resources>
