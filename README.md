@@ -57,10 +57,24 @@ On first launch:
 
 1. Enter your **ABRP user token** (ABRP app → Settings → Live Data → Copy Token)
 2. Select your **car model** from the dropdown (defaults to Sealion 7 Comfort RWD)
-3. Tap **Validate Token** to verify connectivity
+3. Tap **Validate and Save** — the app contacts ABRP to confirm the token is valid, then saves it and locks the field
 4. Tap **Start Telemetry**
 
-Telemetry is sent every 60 seconds. The app auto-starts on car boot and resumes sending if it was active when the car was last turned off.
+To change the token later, tap **Edit Values** to re-enable the input field, then validate again.
+
+### Send interval
+
+The telemetry send rate adapts to driving state:
+
+| State | Interval |
+|---|---|
+| Parked (P gear, or charging) | 60 s |
+| Drive gear (D) | 10 s |
+| Any other state (N, R, unknown) | 30 s |
+
+If SOC and GPS coordinates are both zero when a send is due (e.g. the car API or GPS hasn't connected yet), the app retries once after 3 seconds and skips the send entirely if data is still unavailable.
+
+The app auto-starts on car boot and resumes sending if it was active when the car was last turned off.
 
 ## How it works
 
