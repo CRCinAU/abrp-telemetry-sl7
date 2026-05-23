@@ -84,7 +84,7 @@
                     android:id="@+id/btnValidate"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/validate" />
+                    android:text="@string/validate_and_save" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

@@ -28,6 +28,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private var isServiceRunning = false
+    private var isTokenLocked = false
     private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
 
     private val carModels = listOf(
@@ -164,10 +165,26 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadPreferences() {
         val prefs = getSharedPreferences("abrp_prefs", Context.MODE_PRIVATE)
-        binding.etUserToken.setText(prefs.getString("user_token", ""))
+        val savedToken = prefs.getString("user_token", "")
+        binding.etUserToken.setText(savedToken)
         val savedModel = prefs.getString("car_model", null)
         val entry = carModels.find { it.second == savedModel } ?: carModels[0]
         binding.actvCarModel.setText(entry.first, false)
+        if (!savedToken.isNullOrBlank()) lockTokenInput()
+    }
+
+    private fun lockTokenInput() {
+        isTokenLocked = true
+        binding.tilUserToken.isEnabled = false
+        binding.etUserToken.isEnabled = false
+        binding.btnValidate.text = getString(R.string.edit_values)
+    }
+
+    private fun unlockTokenInput() {
+        isTokenLocked = false
+        binding.tilUserToken.isEnabled = true
+        binding.etUserToken.isEnabled = true
+        binding.btnValidate.text = getString(R.string.validate_and_save)
     }
 
     private fun savePreferences() {
@@ -186,7 +203,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupListeners() {
-        binding.btnValidate.setOnClickListener { validateToken() }
+        binding.btnValidate.setOnClickListener { if (isTokenLocked) unlockTokenInput() else validateToken() }
         binding.btnStartStop.setOnClickListener {
             if (isServiceRunning) stopTelemetryService() else startTelemetryService()
         }
@@ -207,15 +224,16 @@ class MainActivity : AppCompatActivity() {
             val result = ApiClient().validateToken(userToken, BuildConfig.ABRP_API_KEY)
             runOnUiThread {
                 binding.btnValidate.isEnabled = true
-                binding.btnValidate.text = getString(R.string.validate)
                 result.fold(
                     onSuccess = {
                         savePreferences()
+                        lockTokenInput()
                         binding.tvStatus.text = getString(R.string.token_valid)
                         appendLog("[${timeFormat.format(Date())}] Token validated successfully")
                         Toast.makeText(this, R.string.token_valid, Toast.LENGTH_SHORT).show()
                     },
                     onFailure = { e ->
+                        binding.btnValidate.text = getString(R.string.validate_and_save)
                         binding.tvStatus.text = "Validation failed"
                         appendLog("[${timeFormat.format(Date())}] Validation failed: ${e.message}")
                         Toast.makeText(this, "Validation failed: ${e.message}", Toast.LENGTH_LONG).show()
