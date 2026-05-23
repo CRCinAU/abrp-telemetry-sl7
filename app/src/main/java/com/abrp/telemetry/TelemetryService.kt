@@ -43,7 +43,7 @@ class TelemetryService : Service() {
     private var running = false
     private var vehicleManager: VehicleDataManager? = null
     private var locationManager: LocationManager? = null
-    private var lastLocation: Location? = null
+    @Volatile private var lastLocation: Location? = null
 
     private val locationListener = object : LocationListener {
         override fun onLocationChanged(location: Location) { lastLocation = location }
@@ -146,27 +146,40 @@ class TelemetryService : Service() {
             return
         }
 
-        val v = vehicleManager?.snapshot()
-        val loc = lastLocation
-
-        val data = TelemetryData(
-            utc = System.currentTimeMillis() / 1000,
-            soc = v?.socPercent?.toDouble() ?: 0.0,
-            speed = v?.speedKmh?.toDouble() ?: ((loc?.speed ?: 0f) * 3.6).toDouble(),
-            lat = loc?.latitude ?: 0.0,
-            lon = loc?.longitude ?: 0.0,
-            is_charging = if (v?.isCharging == true) 1 else 0,
-            is_dcfc = if (v?.isDcfc == true) 1 else 0,
-            is_parked = if (v?.isParked == true) 1 else 0,
-            elevation = loc?.altitude?.takeIf { it != 0.0 },
-            heading = loc?.bearing?.toDouble()?.takeIf { it != 0.0 },
-            ext_temp = v?.outsideTempC?.toDouble(),
-            power = v?.chargeRateKw?.toDouble()?.takeIf { it > 0.0 }?.let { if (v.isCharging) -it else it },
-            est_battery_range = v?.rangeKm?.takeIf { it > 0 }?.toDouble(),
-            car_model = carModel
-        )
+        val vm = vehicleManager
 
         Thread {
+            var v = vm?.snapshot()
+            var loc = lastLocation
+
+            if ((v?.socPercent ?: 0f) == 0f && (loc?.latitude ?: 0.0) == 0.0 && (loc?.longitude ?: 0.0) == 0.0) {
+                broadcast(logMessage = "[${timeFormat.format(Date())}] SOC and GPS both zero — retrying in 3s…")
+                Thread.sleep(3_000L)
+                v = vm?.snapshot()
+                loc = lastLocation
+                if ((v?.socPercent ?: 0f) == 0f && (loc?.latitude ?: 0.0) == 0.0 && (loc?.longitude ?: 0.0) == 0.0) {
+                    broadcast(logMessage = "[${timeFormat.format(Date())}] Skipping send — no valid SOC or GPS data")
+                    return@Thread
+                }
+            }
+
+            val data = TelemetryData(
+                utc = System.currentTimeMillis() / 1000,
+                soc = v?.socPercent?.toDouble() ?: 0.0,
+                speed = v?.speedKmh?.toDouble() ?: ((loc?.speed ?: 0f) * 3.6).toDouble(),
+                lat = loc?.latitude ?: 0.0,
+                lon = loc?.longitude ?: 0.0,
+                is_charging = if (v?.isCharging == true) 1 else 0,
+                is_dcfc = if (v?.isDcfc == true) 1 else 0,
+                is_parked = if (v?.isParked == true) 1 else 0,
+                elevation = loc?.altitude?.takeIf { it != 0.0 },
+                heading = loc?.bearing?.toDouble()?.takeIf { it != 0.0 },
+                ext_temp = v?.outsideTempC?.toDouble(),
+                power = v?.chargeRateKw?.toDouble()?.takeIf { it > 0.0 }?.let { if (v.isCharging) -it else it },
+                est_battery_range = v?.rangeKm?.takeIf { it > 0 }?.toDouble(),
+                car_model = carModel
+            )
+
             val result = apiClient.sendTelemetry(userToken, apiKey, data)
             val time = timeFormat.format(Date())
             result.fold(
