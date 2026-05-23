@@ -34,7 +34,11 @@ class TelemetryService : Service() {
         const val BROADCAST_ACTION = "com.abrp.telemetry.STATUS_UPDATE"
         const val EXTRA_LOG_MESSAGE = "log_message"
         const val EXTRA_STATUS_MESSAGE = "status_message"
+        const val EXTRA_IS_RUNNING = "is_running"
         const val INTERVAL_PARKED_MS  = 60_000L
+
+        @Volatile var isRunning: Boolean = false
+            private set
         const val INTERVAL_OTHER_MS   = 30_000L
         const val INTERVAL_DRIVING_MS = 10_000L
     }
@@ -82,12 +86,21 @@ class TelemetryService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        if (running) {
+            // System destroyed us without going through stop() — clean up state so the
+            // activity and prefs don't think telemetry is still active.
+            running = false
+            isRunning = false
+            getSharedPreferences("abrp_prefs", Context.MODE_PRIVATE).edit()
+                .putBoolean("telemetry_running", false).apply()
+        }
         cleanup()
     }
 
     private fun start() {
         if (running) return
         running = true
+        isRunning = true
         getSharedPreferences("abrp_prefs", Context.MODE_PRIVATE).edit().putBoolean("telemetry_running", true).apply()
         startForeground(NOTIFICATION_ID, buildNotification("Connecting to vehicle…"))
 
@@ -100,10 +113,11 @@ class TelemetryService : Service() {
 
     private fun stop() {
         running = false
+        isRunning = false
         getSharedPreferences("abrp_prefs", Context.MODE_PRIVATE).edit().putBoolean("telemetry_running", false).apply()
         handler.removeCallbacks(sendRunnable)
         cleanup()
-        broadcast(statusMessage = "Telemetry stopped")
+        broadcast(statusMessage = "Telemetry stopped", isStopped = true)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
@@ -147,6 +161,7 @@ class TelemetryService : Service() {
 
         if (userToken.isBlank() || apiKey.isBlank()) {
             broadcast(logMessage = "ERROR: Token or API key not configured")
+            handler.postDelayed(sendRunnable, INTERVAL_PARKED_MS)
             return
         }
 
@@ -214,10 +229,11 @@ class TelemetryService : Service() {
         }
     }
 
-    private fun broadcast(logMessage: String? = null, statusMessage: String? = null) {
+    private fun broadcast(logMessage: String? = null, statusMessage: String? = null, isStopped: Boolean = false) {
         val intent = Intent(BROADCAST_ACTION)
         logMessage?.let { intent.putExtra(EXTRA_LOG_MESSAGE, it) }
         statusMessage?.let { intent.putExtra(EXTRA_STATUS_MESSAGE, it) }
+        if (isStopped) intent.putExtra(EXTRA_IS_RUNNING, false)
         sendBroadcast(intent)
     }
 

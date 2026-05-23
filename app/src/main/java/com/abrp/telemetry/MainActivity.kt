@@ -54,14 +54,12 @@ class MainActivity : AppCompatActivity() {
     private val statusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             intent ?: return
-            intent.getStringExtra(TelemetryService.EXTRA_STATUS_MESSAGE)?.let { status ->
-                binding.tvStatus.text = status
-                if (status == "Telemetry stopped") {
-                    isServiceRunning = false
-                    updateStartStopButton()
-                }
-            }
+            intent.getStringExtra(TelemetryService.EXTRA_STATUS_MESSAGE)?.let { binding.tvStatus.text = it }
             intent.getStringExtra(TelemetryService.EXTRA_LOG_MESSAGE)?.let { appendLog(it) }
+            if (intent.hasExtra(TelemetryService.EXTRA_IS_RUNNING)) {
+                isServiceRunning = intent.getBooleanExtra(TelemetryService.EXTRA_IS_RUNNING, true)
+                updateStartStopButton()
+            }
         }
     }
 
@@ -107,6 +105,10 @@ class MainActivity : AppCompatActivity() {
             @Suppress("UnspecifiedRegisterReceiverFlag")
             registerReceiver(statusReceiver, filter)
         }
+        // Re-sync button with the actual service state — catches any "stopped" broadcast
+        // that fired while the receiver was unregistered (activity paused).
+        isServiceRunning = TelemetryService.isRunning
+        updateStartStopButton()
     }
 
     override fun onPause() {
