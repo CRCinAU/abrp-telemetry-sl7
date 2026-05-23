@@ -34,7 +34,9 @@ class TelemetryService : Service() {
         const val BROADCAST_ACTION = "com.abrp.telemetry.STATUS_UPDATE"
         const val EXTRA_LOG_MESSAGE = "log_message"
         const val EXTRA_STATUS_MESSAGE = "status_message"
-        const val SEND_INTERVAL_MS = 60_000L
+        const val INTERVAL_PARKED_MS  = 60_000L
+        const val INTERVAL_OTHER_MS   = 30_000L
+        const val INTERVAL_DRIVING_MS = 10_000L
     }
 
     private lateinit var handler: Handler
@@ -53,11 +55,13 @@ class TelemetryService : Service() {
         override fun onProviderDisabled(provider: String) {}
     }
 
-    private val sendRunnable = object : Runnable {
-        override fun run() {
-            sendTelemetry()
-            handler.postDelayed(this, SEND_INTERVAL_MS)
-        }
+    // Rescheduling is done inside sendTelemetry's background thread once the vehicle state is known.
+    private val sendRunnable = Runnable { sendTelemetry() }
+
+    private fun nextInterval(v: VehicleDataManager.VehicleState?): Long = when {
+        v == null || v.isParked -> INTERVAL_PARKED_MS
+        v.shiftMode == VehicleDataManager.GEAR_DRIVE -> INTERVAL_DRIVING_MS
+        else -> INTERVAL_OTHER_MS
     }
 
     override fun onCreate() {
@@ -91,7 +95,7 @@ class TelemetryService : Service() {
 
         startLocationUpdates()
         handler.post(sendRunnable)
-        broadcast(statusMessage = "Telemetry started — sending every 60s")
+        broadcast(statusMessage = "Telemetry started — interval adapts to driving state")
     }
 
     private fun stop() {
@@ -159,6 +163,7 @@ class TelemetryService : Service() {
                 loc = lastLocation
                 if ((v?.socPercent ?: 0f) == 0f && (loc?.latitude ?: 0.0) == 0.0 && (loc?.longitude ?: 0.0) == 0.0) {
                     broadcast(logMessage = "[${timeFormat.format(Date())}] Skipping send — no valid SOC or GPS data")
+                    if (running) handler.postDelayed(sendRunnable, nextInterval(v))
                     return@Thread
                 }
             }
@@ -197,6 +202,7 @@ class TelemetryService : Service() {
                     updateNotification("Send error — check log")
                 }
             )
+            if (running) handler.postDelayed(sendRunnable, nextInterval(v))
         }.start()
     }
 

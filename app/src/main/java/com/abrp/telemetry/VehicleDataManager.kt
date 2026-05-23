@@ -19,7 +19,7 @@ class VehicleDataManager(private val context: Context) {
         private const val GEAR_PARK = 1
         private const val GEAR_REVERSE = 2  // inferred from sequence P=1,N=3,D=4; never observed — 360 camera activates on R and kills CarAdapterService before any poll can catch it
         private const val GEAR_NEUTRAL = 3
-        private const val GEAR_DRIVE = 4
+        const val GEAR_DRIVE = 4
     }
 
     data class VehicleState(
