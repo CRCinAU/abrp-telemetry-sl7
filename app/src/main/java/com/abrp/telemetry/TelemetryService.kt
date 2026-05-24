@@ -78,22 +78,15 @@ class TelemetryService : Service() {
         when (intent?.action) {
             ACTION_START -> start()
             ACTION_STOP -> stop()
+            null -> start()  // sticky restart after system kill
         }
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
         super.onDestroy()
-        if (running) {
-            // System destroyed us without going through stop() — clean up state so the
-            // activity and prefs don't think telemetry is still active.
-            running = false
-            isRunning = false
-            getSharedPreferences("abrp_prefs", Context.MODE_PRIVATE).edit()
-                .putBoolean("telemetry_running", false).apply()
-        }
         cleanup()
     }
 
