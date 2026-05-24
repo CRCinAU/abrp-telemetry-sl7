@@ -7,6 +7,14 @@ def localProps = new Properties()
 def localPropsFile = rootProject.file('local.properties')
 if (localPropsFile.exists()) localProps.load(localPropsFile.newDataInputStream())
 
+def gitVersionName = {
+    try {
+        def out = new ByteArrayOutputStream()
+        exec { commandLine 'git', 'describe', '--tags', '--always'; standardOutput = out }
+        out.toString().trim().replaceFirst('^v', '')
+    } catch (ignored) { 'dev' }
+}
+
 android {
     namespace 'com.abrp.telemetry'
     compileSdk 34
@@ -16,7 +24,7 @@ android {
         minSdk 26
         targetSdk 30
         versionCode project.hasProperty('versionCode') ? project.versionCode.toInteger() : 1
-        versionName project.hasProperty('versionName') ? project.versionName : 'dev'
+        versionName project.hasProperty('versionName') ? project.versionName : gitVersionName()
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField "String", "ABRP_API_KEY", "\"${localProps.getProperty('abrp.api_key', '')}\""
     }
