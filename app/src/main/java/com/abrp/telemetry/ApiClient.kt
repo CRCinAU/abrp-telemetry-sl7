@@ -50,8 +50,6 @@ class ApiClient {
             utc = System.currentTimeMillis() / 1000,
             soc = 50.0,
             speed = 0.0,
-            lat = 0.0,
-            lon = 0.0,
             is_charging = 0,
             is_dcfc = 0,
             is_parked = 1
@@ -62,14 +60,14 @@ class ApiClient {
     private fun buildTlmJson(data: TelemetryData): String {
         val map = mutableMapOf<String, Any>(
             "utc" to data.utc,
-            "soc" to data.soc,
             "speed" to data.speed,
-            "lat" to data.lat,
-            "lon" to data.lon,
             "is_charging" to data.is_charging,
             "is_dcfc" to data.is_dcfc,
             "is_parked" to data.is_parked
         )
+        data.soc?.let { map["soc"] = it }
+        data.lat?.let { map["lat"] = it }
+        data.lon?.let { map["lon"] = it }
         data.elevation?.let { map["elevation"] = it }
         data.heading?.let { map["heading"] = it }
         data.soh?.let { map["soh"] = it }

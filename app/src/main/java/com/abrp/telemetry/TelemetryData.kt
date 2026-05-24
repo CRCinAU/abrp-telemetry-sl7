@@ -2,10 +2,10 @@ package com.abrp.telemetry
 
 data class TelemetryData(
     val utc: Long,
-    val soc: Double,
+    val soc: Double? = null,
     val speed: Double,
-    val lat: Double,
-    val lon: Double,
+    val lat: Double? = null,
+    val lon: Double? = null,
     val is_charging: Int,
     val is_dcfc: Int,
     val is_parked: Int,

@@ -176,12 +176,13 @@ class TelemetryService : Service() {
                 }
             }
 
+            val hasGps = loc != null && !(loc.latitude == 0.0 && loc.longitude == 0.0)
             val data = TelemetryData(
                 utc = System.currentTimeMillis() / 1000,
-                soc = v?.socPercent?.toDouble() ?: 0.0,
+                soc = v?.socPercent?.toDouble()?.takeIf { it > 0.0 },
                 speed = v?.speedKmh?.toDouble() ?: ((loc?.speed ?: 0f) * 3.6).toDouble(),
-                lat = loc?.latitude ?: 0.0,
-                lon = loc?.longitude ?: 0.0,
+                lat = if (hasGps) loc!!.latitude else null,
+                lon = if (hasGps) loc!!.longitude else null,
                 is_charging = if (v?.isCharging == true) 1 else 0,
                 is_dcfc = if (v?.isDcfc == true) 1 else 0,
                 is_parked = if (v?.isParked == true) 1 else 0,
@@ -202,11 +203,13 @@ class TelemetryService : Service() {
                         data.is_charging == 1 -> " ⚡AC"
                         else -> ""
                     }
+                    val socStr = data.soc?.let { "soc=${"%.1f".format(it)}%" } ?: "no SOC"
+                    val gpsStr = if (data.lat != null) ", lat=${"%.4f".format(data.lat)}, lon=${"%.4f".format(data.lon)}" else ", no GPS"
                     broadcast(
-                        logMessage = "[$time] OK — soc=${"%.1f".format(data.soc)}%, spd=${data.speed.toInt()}km/h, lat=${"%.4f".format(data.lat)}, lon=${"%.4f".format(data.lon)}$chg",
+                        logMessage = "[$time] OK — $socStr, spd=${data.speed.toInt()}km/h$gpsStr$chg",
                         statusMessage = intervalDescription(v)
                     )
-                    updateNotification("Last sent: $time | SOC: ${"%.1f".format(data.soc)}%")
+                    updateNotification("Last sent: $time | SOC: ${data.soc?.let { "%.1f".format(it) } ?: "--"}%")
                 },
                 onFailure = { e ->
                     broadcast(
