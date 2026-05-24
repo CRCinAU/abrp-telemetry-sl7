@@ -101,7 +101,7 @@ class TelemetryService : Service() {
 
         startLocationUpdates()
         handler.post(sendRunnable)
-        broadcast(statusMessage = "Telemetry started — interval adapts to driving state")
+        broadcast(statusMessage = "Telemetry started")
     }
 
     private fun stop() {
@@ -202,16 +202,36 @@ class TelemetryService : Service() {
                         data.is_charging == 1 -> " ⚡AC"
                         else -> ""
                     }
-                    broadcast(logMessage = "[$time] OK — soc=${"%.1f".format(data.soc)}%, spd=${data.speed.toInt()}km/h, lat=${"%.4f".format(data.lat)}, lon=${"%.4f".format(data.lon)}$chg")
+                    broadcast(
+                        logMessage = "[$time] OK — soc=${"%.1f".format(data.soc)}%, spd=${data.speed.toInt()}km/h, lat=${"%.4f".format(data.lat)}, lon=${"%.4f".format(data.lon)}$chg",
+                        statusMessage = intervalDescription(v)
+                    )
                     updateNotification("Last sent: $time | SOC: ${"%.1f".format(data.soc)}%")
                 },
                 onFailure = { e ->
-                    broadcast(logMessage = "[$time] FAIL: ${e.message}")
+                    broadcast(
+                        logMessage = "[$time] FAIL: ${e.message}",
+                        statusMessage = intervalDescription(v)
+                    )
                     updateNotification("Send error — check log")
                 }
             )
             if (running) handler.postDelayed(sendRunnable, nextInterval(v))
         }.start()
+    }
+
+    private fun intervalDescription(v: VehicleDataManager.VehicleState?): String {
+        val ms: Long; val reason: String
+        when {
+            v == null        -> { ms = INTERVAL_PARKED_MS;  reason = "no vehicle data" }
+            v.isDcfc         -> { ms = INTERVAL_PARKED_MS;  reason = "DC fast charging" }
+            v.isCharging     -> { ms = INTERVAL_PARKED_MS;  reason = "charging" }
+            v.isParked       -> { ms = INTERVAL_PARKED_MS;  reason = "parked" }
+            v.shiftMode == VehicleDataManager.GEAR_DRIVE
+                             -> { ms = INTERVAL_DRIVING_MS; reason = "driving" }
+            else             -> { ms = INTERVAL_OTHER_MS;   reason = "gear ${v.shiftMode}" }
+        }
+        return "Sending every ${ms / 1000}s — $reason"
     }
 
     private fun connectVehicleManager() {
