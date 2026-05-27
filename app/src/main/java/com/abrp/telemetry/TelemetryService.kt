@@ -1,6 +1,7 @@
 package com.abrp.telemetry
 
 import android.Manifest
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -14,9 +15,9 @@ import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
@@ -31,11 +32,13 @@ class TelemetryService : Service() {
         const val NOTIFICATION_ID = 1001
         const val ACTION_START = "com.abrp.telemetry.START"
         const val ACTION_STOP = "com.abrp.telemetry.STOP"
+        const val ACTION_TICK = "com.abrp.telemetry.TICK"
         const val BROADCAST_ACTION = "com.abrp.telemetry.STATUS_UPDATE"
         const val EXTRA_LOG_MESSAGE = "log_message"
         const val EXTRA_STATUS_MESSAGE = "status_message"
         const val EXTRA_IS_RUNNING = "is_running"
         const val INTERVAL_PARKED_MS  = 60_000L
+        private const val ALARM_REQUEST_CODE = 1
 
         @Volatile var isRunning: Boolean = false
             private set
@@ -43,7 +46,6 @@ class TelemetryService : Service() {
         const val INTERVAL_DRIVING_MS = 10_000L
     }
 
-    private lateinit var handler: Handler
     private val apiClient = ApiClient()
     private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
     private var running = false
@@ -59,9 +61,6 @@ class TelemetryService : Service() {
         override fun onProviderDisabled(provider: String) {}
     }
 
-    // Rescheduling is done inside sendTelemetry's background thread once the vehicle state is known.
-    private val sendRunnable = Runnable { sendTelemetry() }
-
     private fun nextInterval(v: VehicleDataManager.VehicleState?): Long = when {
         v == null || v.isParked -> INTERVAL_PARKED_MS
         v.shiftMode == VehicleDataManager.GEAR_DRIVE -> INTERVAL_DRIVING_MS
@@ -70,15 +69,13 @@ class TelemetryService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        handler = Handler(Looper.getMainLooper())
         createNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> start()
+            ACTION_START, ACTION_TICK, null -> start()
             ACTION_STOP -> stop()
-            null -> start()  // sticky restart after system kill
         }
         return START_STICKY
     }
@@ -91,24 +88,29 @@ class TelemetryService : Service() {
     }
 
     private fun start() {
-        if (running) return
-        running = true
-        isRunning = true
-        getSharedPreferences("abrp_prefs", Context.MODE_PRIVATE).edit().putBoolean("telemetry_running", true).apply()
-        startForeground(NOTIFICATION_ID, buildNotification("Connecting to vehicle…"))
-
-        connectVehicleManager()
-
-        startLocationUpdates()
-        handler.post(sendRunnable)
-        broadcast(statusMessage = "Telemetry started")
+        val wasRunning = running
+        if (!wasRunning) {
+            running = true
+            isRunning = true
+            getSharedPreferences("abrp_prefs", Context.MODE_PRIVATE).edit()
+                .putBoolean("telemetry_running", true).apply()
+            connectVehicleManager()
+            startLocationUpdates()
+            broadcast(statusMessage = "Telemetry started")
+        } else if (vehicleManager == null) {
+            // We were running before but the manager was torn down — re-establish.
+            connectVehicleManager()
+            startLocationUpdates()
+        }
+        startForeground(NOTIFICATION_ID, buildNotification("Telemetry active"))
+        sendTelemetry()
     }
 
     private fun stop() {
         running = false
         isRunning = false
         getSharedPreferences("abrp_prefs", Context.MODE_PRIVATE).edit().putBoolean("telemetry_running", false).apply()
-        handler.removeCallbacks(sendRunnable)
+        cancelScheduledSend()
         cleanup()
         broadcast(statusMessage = "Telemetry stopped", isStopped = true)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -118,6 +120,30 @@ class TelemetryService : Service() {
             stopForeground(true)
         }
         stopSelf()
+    }
+
+    private fun tickPendingIntent(flags: Int): PendingIntent? = PendingIntent.getBroadcast(
+        this, ALARM_REQUEST_CODE,
+        Intent(this, TickReceiver::class.java),
+        flags or PendingIntent.FLAG_IMMUTABLE
+    )
+
+    // Non-wakeup alarm on ELAPSED_REALTIME: queued during STR (so we don't burn battery
+    // sending with no network while ignition is off), fires on resume — picking up after a
+    // car ignition cycle without depending on BOOT_COMPLETED or Handler uptime.
+    private fun scheduleNextSend(delayMs: Long) {
+        val pi = tickPendingIntent(PendingIntent.FLAG_UPDATE_CURRENT) ?: return
+        getSystemService(AlarmManager::class.java).setAndAllowWhileIdle(
+            AlarmManager.ELAPSED_REALTIME,
+            SystemClock.elapsedRealtime() + delayMs,
+            pi
+        )
+    }
+
+    private fun cancelScheduledSend() {
+        val pi = tickPendingIntent(PendingIntent.FLAG_NO_CREATE) ?: return
+        getSystemService(AlarmManager::class.java).cancel(pi)
+        pi.cancel()
     }
 
     private fun cleanup() {
@@ -154,7 +180,7 @@ class TelemetryService : Service() {
 
         if (userToken.isBlank() || apiKey.isBlank()) {
             broadcast(logMessage = "ERROR: Token or API key not configured")
-            handler.postDelayed(sendRunnable, INTERVAL_PARKED_MS)
+            scheduleNextSend(INTERVAL_PARKED_MS)
             return
         }
 
@@ -171,7 +197,7 @@ class TelemetryService : Service() {
                 loc = lastLocation
                 if ((v?.socPercent ?: 0f) == 0f && (loc?.latitude ?: 0.0) == 0.0 && (loc?.longitude ?: 0.0) == 0.0) {
                     broadcast(logMessage = "[${timeFormat.format(Date())}] Skipping send — no valid SOC or GPS data")
-                    if (running) handler.postDelayed(sendRunnable, nextInterval(v))
+                    if (running) scheduleNextSend(nextInterval(v))
                     return@Thread
                 }
             }
@@ -219,7 +245,7 @@ class TelemetryService : Service() {
                     updateNotification("Send error — check log")
                 }
             )
-            if (running) handler.postDelayed(sendRunnable, nextInterval(v))
+            if (running) scheduleNextSend(nextInterval(v))
         }.start()
     }
 
