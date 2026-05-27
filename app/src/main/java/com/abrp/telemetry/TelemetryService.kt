@@ -15,6 +15,7 @@ import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
@@ -39,11 +40,38 @@ class TelemetryService : Service() {
         const val EXTRA_IS_RUNNING = "is_running"
         const val INTERVAL_PARKED_MS  = 60_000L
         private const val ALARM_REQUEST_CODE = 1
+        private const val POLL_INTERVAL_MS = 2_000L
+        private const val MIN_SEND_GAP_MS  = 3_000L
 
         @Volatile var isRunning: Boolean = false
             private set
         const val INTERVAL_OTHER_MS   = 30_000L
         const val INTERVAL_DRIVING_MS = 10_000L
+    }
+
+    // Booleans that affect the send cadence (or that ABRP cares about enough to report
+    // immediately). A change in any of these short-cuts the scheduled wait.
+    private data class TriggerKey(
+        val parked: Boolean,
+        val drive: Boolean,
+        val charging: Boolean,
+        val dcfc: Boolean,
+    ) {
+        fun describe(): String = when {
+            dcfc -> "DCFC"
+            charging -> "charging"
+            drive -> "driving"
+            parked -> "parked"
+            else -> "other"
+        }
+        companion object {
+            fun of(v: VehicleDataManager.VehicleState) = TriggerKey(
+                parked = v.isParked,
+                drive = v.shiftMode == VehicleDataManager.GEAR_DRIVE,
+                charging = v.isCharging,
+                dcfc = v.isDcfc,
+            )
+        }
     }
 
     private val apiClient = ApiClient()
@@ -52,6 +80,13 @@ class TelemetryService : Service() {
     private var vehicleManager: VehicleDataManager? = null
     private var locationManager: LocationManager? = null
     @Volatile private var lastLocation: Location? = null
+
+    // State-change poller: runs on the main thread while the service is alive (not across STR —
+    // AlarmManager still owns recovery). Lets us short-cut the scheduled wait when the cadence-
+    // relevant state changes between sends.
+    private lateinit var pollHandler: Handler
+    @Volatile private var lastObservedKey: TriggerKey? = null
+    @Volatile private var lastSendStartedElapsedMs: Long = 0L
 
     private val locationListener = object : LocationListener {
         override fun onLocationChanged(location: Location) { lastLocation = location }
@@ -69,7 +104,44 @@ class TelemetryService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        pollHandler = Handler(Looper.getMainLooper())
         createNotificationChannel()
+    }
+
+    private val pollRunnable = object : Runnable {
+        override fun run() {
+            if (!running) return
+            checkForStateChange()
+            pollHandler.postDelayed(this, POLL_INTERVAL_MS)
+        }
+    }
+
+    private fun startStatePoller() {
+        pollHandler.removeCallbacks(pollRunnable)
+        pollHandler.postDelayed(pollRunnable, POLL_INTERVAL_MS)
+    }
+
+    private fun stopStatePoller() {
+        pollHandler.removeCallbacks(pollRunnable)
+    }
+
+    private fun checkForStateChange() {
+        val v = vehicleManager?.snapshot() ?: return
+        if (!v.connected) return  // skip stale/cached reads during binder reconnect
+        val newKey = TriggerKey.of(v)
+        val oldKey = lastObservedKey
+        if (oldKey == null) {
+            lastObservedKey = newKey
+            return
+        }
+        if (oldKey == newKey) return
+        // Debounce: refuse to fire if we already sent very recently. The in-flight or just-
+        // completed send is using a snapshot close to the current state anyway.
+        if (SystemClock.elapsedRealtime() - lastSendStartedElapsedMs < MIN_SEND_GAP_MS) return
+        lastObservedKey = newKey
+        broadcast(logMessage = "[${timeFormat.format(Date())}] State change: ${oldKey.describe()} → ${newKey.describe()} — sending now")
+        cancelScheduledSend()
+        sendTelemetry()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -104,12 +176,14 @@ class TelemetryService : Service() {
         }
         startForeground(NOTIFICATION_ID, buildNotification("Telemetry active"))
         sendTelemetry()
+        startStatePoller()
     }
 
     private fun stop() {
         running = false
         isRunning = false
         getSharedPreferences("abrp_prefs", Context.MODE_PRIVATE).edit().putBoolean("telemetry_running", false).apply()
+        stopStatePoller()
         cancelScheduledSend()
         cleanup()
         broadcast(statusMessage = "Telemetry stopped", isStopped = true)
@@ -185,6 +259,7 @@ class TelemetryService : Service() {
         }
 
         val vm = vehicleManager
+        lastSendStartedElapsedMs = SystemClock.elapsedRealtime()
 
         Thread {
             var v = vm?.snapshot()
@@ -203,6 +278,8 @@ class TelemetryService : Service() {
             }
 
             val hasGps = loc != null && !(loc.latitude == 0.0 && loc.longitude == 0.0)
+            // Anchor for the poller so it can short-cut subsequent waits on state change.
+            v?.let { if (it.connected) lastObservedKey = TriggerKey.of(it) }
             val data = TelemetryData(
                 utc = System.currentTimeMillis() / 1000,
                 soc = v?.socPercent?.toDouble()?.takeIf { it > 0.0 },
