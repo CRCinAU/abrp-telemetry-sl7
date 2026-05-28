@@ -27,22 +27,32 @@ jobs:
             echo "::error::DEBUG_KEYSTORE secret is missing or empty"
             exit 1
           fi
-          mkdir -p ~/.android
+          # AGP on GitHub's ubuntu runners reads the debug keystore from
+          # $XDG_CONFIG_HOME/.android/debug.keystore — NOT the legacy
+          # ~/.android/debug.keystore. Confirmed via `./gradlew :app:signingReport`
+          # which prints `Store: /home/runner/.config/.android/debug.keystore`.
+          # Write to both paths so we work whether or not XDG_CONFIG_HOME is set.
+          KS_LEGACY="$HOME/.android/debug.keystore"
+          KS_XDG="${XDG_CONFIG_HOME:-$HOME/.config}/.android/debug.keystore"
+          mkdir -p "$(dirname "$KS_LEGACY")" "$(dirname "$KS_XDG")"
           # printf %s avoids the extra newline that `echo "$x"` would add.
-          printf '%s' "${{ secrets.DEBUG_KEYSTORE }}" | base64 -d > ~/.android/debug.keystore
-          if [ ! -s ~/.android/debug.keystore ]; then
+          printf '%s' "${{ secrets.DEBUG_KEYSTORE }}" | base64 -d > "$KS_LEGACY"
+          if [ ! -s "$KS_LEGACY" ]; then
             echo "::error::Decoded keystore is empty — DEBUG_KEYSTORE is not valid base64"
             exit 1
           fi
-          # Smoke-test with AGP's expected default debug creds. If your keystore
-          # uses different creds, AGP can't sign with it either — regenerate with:
+          cp "$KS_LEGACY" "$KS_XDG"
+          # Smoke-test the path AGP actually reads. If your keystore uses
+          # different creds, AGP can't sign with it either — regenerate with:
           #   keytool -genkey -keystore debug.keystore -storepass android \
           #     -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 \
           #     -validity 10000 -dname "CN=Android Debug, O=Android, C=US"
-          keytool -list -keystore ~/.android/debug.keystore -storepass android \
+          keytool -list -keystore "$KS_XDG" -storepass android \
             -alias androiddebugkey > /dev/null
-          echo "Keystore restored ($(stat -c%s ~/.android/debug.keystore) bytes):"
-          keytool -list -v -keystore ~/.android/debug.keystore -storepass android \
+          echo "Keystore restored to:"
+          echo "  $KS_LEGACY ($(stat -c%s "$KS_LEGACY") bytes)"
+          echo "  $KS_XDG ($(stat -c%s "$KS_XDG") bytes)"
+          keytool -list -v -keystore "$KS_XDG" -storepass android \
             -alias androiddebugkey | grep -E '^(Owner|SHA256):'
 
       - name: Write API key to local.properties
