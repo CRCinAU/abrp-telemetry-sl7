@@ -231,27 +231,52 @@ object Updater {
         }
     }
 
-    /** Returns true iff [latest] is a higher semver than [current]. Non-numeric
-     *  components (e.g. "dev", "-beta") fail to parse and return false, so a local
-     *  dev build never tries to "upgrade" to a tagged release. */
+    /** Returns true iff [latest] is strictly newer than [current], treating
+     *  git-describe-style suffixes as "this many commits past the named tag".
+     *
+     *  Examples:
+     *      isNewer("1.0.5",        "1.0.4-3-gabc") = true   (next release wins)
+     *      isNewer("1.0.4",        "1.0.4-3-gabc") = false  (local is past v1.0.4)
+     *      isNewer("1.0.4-3-gabc", "1.0.4-3-gabc") = false  (equal)
+     *      isNewer("1.0.4-5-gxyz", "1.0.4-3-gabc") = true   (more commits past tag)
+     *  Either side unparseable → false (conservative — don't update). */
     private fun isNewer(latest: String, current: String): Boolean {
-        val l = parseSemver(latest) ?: return false
-        val c = parseSemver(current) ?: return false
-        for (i in 0 until maxOf(l.size, c.size)) {
-            val li = l.getOrElse(i) { 0 }
-            val ci = c.getOrElse(i) { 0 }
+        val l = parseDescribe(latest) ?: return false
+        val c = parseDescribe(current) ?: return false
+        // Base semver first — tag with a higher base wins outright even against
+        // a dev build of an older tag.
+        for (i in 0 until maxOf(l.base.size, c.base.size)) {
+            val li = l.base.getOrElse(i) { 0 }
+            val ci = c.base.getOrElse(i) { 0 }
             if (li != ci) return li > ci
         }
-        return false
+        // Same base: more commits past the tag = newer.
+        return l.commitsAhead > c.commitsAhead
     }
 
-    private fun parseSemver(s: String): IntArray? {
-        // Strict: every dotted component must parse as a non-negative int. A
-        // suffix like "-dev" makes the whole string unparseable, which makes
-        // isNewer() return false — local dev builds correctly don't try to
-        // "upgrade" themselves to a numerically lower tagged release.
-        val parts = s.removePrefix("v").split(".")
-        val ints = parts.map { it.toIntOrNull() ?: return null }
-        return if (ints.isEmpty()) null else ints.toIntArray()
+    private data class Describe(val base: IntArray, val commitsAhead: Int)
+
+    /** Parse "1.0.4", "v1.0.4", "1.0.4-3-gabc", "1.0.4-3" into (base, commits).
+     *  Anything else (SHA-only "gabc123", "dev", malformed) returns null. */
+    private fun parseDescribe(s: String): Describe? {
+        val trimmed = s.removePrefix("v")
+        val firstDash = trimmed.indexOf('-')
+        val basePart: String
+        val ahead: Int
+        if (firstDash < 0) {
+            basePart = trimmed
+            ahead = 0
+        } else {
+            basePart = trimmed.substring(0, firstDash)
+            // Tail is "3-gabc" or just "3" — first dash-delimited token must
+            // parse as a non-negative int (the commit count past the tag).
+            val tail = trimmed.substring(firstDash + 1)
+            val nextDash = tail.indexOf('-')
+            val countStr = if (nextDash < 0) tail else tail.substring(0, nextDash)
+            ahead = countStr.toIntOrNull()?.takeIf { it >= 0 } ?: return null
+        }
+        val ints = basePart.split(".").map { it.toIntOrNull() ?: return null }
+        if (ints.isEmpty()) return null
+        return Describe(ints.toIntArray(), ahead)
     }
 }

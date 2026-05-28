@@ -15,6 +15,17 @@ def gitVersionName = {
     } catch (ignored) { 'dev' }
 }
 
+// versionCode = HEAD commit's unix timestamp. Monotonic between any two commits
+// in time, which is the only thing pm install -r cares about. Local builds and
+// CI builds at the same commit produce the same versionCode (reproducible).
+def gitCommitTime = {
+    try {
+        def out = new ByteArrayOutputStream()
+        exec { commandLine 'git', 'log', '-1', '--format=%ct'; standardOutput = out }
+        Integer.parseInt(out.toString().trim())
+    } catch (ignored) { 1 }
+}
+
 android {
     namespace 'com.abrp.telemetry'
     compileSdk 34
@@ -23,7 +34,7 @@ android {
         applicationId "com.abrp.telemetry"
         minSdk 26
         targetSdk 30
-        versionCode project.hasProperty('versionCode') ? project.versionCode.toInteger() : 1
+        versionCode project.hasProperty('versionCode') ? project.versionCode.toInteger() : gitCommitTime()
         versionName project.hasProperty('versionName') ? project.versionName : gitVersionName()
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField "String", "ABRP_API_KEY", "\"${localProps.getProperty('abrp.api_key', '')}\""
