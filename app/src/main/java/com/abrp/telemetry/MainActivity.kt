@@ -163,6 +163,26 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateGpsUI(loc: Location) {
         binding.tvGps.text = "${"%.5f".format(loc.latitude)}, ${"%.5f".format(loc.longitude)}"
+        // GPS bearing is 0 when stationary — treat that as unknown so we don't flash
+        // "0° N" while parked.
+        binding.tvHeading.text = if (loc.hasBearing() && loc.bearing != 0f) {
+            "${loc.bearing.toInt()}° ${cardinal(loc.bearing)}"
+        } else {
+            "--"
+        }
+        binding.tvElevation.text = if (loc.hasAltitude()) {
+            "${loc.altitude.toInt()} m"
+        } else {
+            "--"
+        }
+    }
+
+    private fun cardinal(bearing: Float): String {
+        // 16-point compass label for the heading row.
+        val labels = arrayOf("N","NNE","NE","ENE","E","ESE","SE","SSE",
+                             "S","SSW","SW","WSW","W","WNW","NW","NNW")
+        val idx = ((bearing + 11.25f) % 360f / 22.5f).toInt() and 0xF
+        return labels[idx]
     }
 
     private fun loadPreferences() {

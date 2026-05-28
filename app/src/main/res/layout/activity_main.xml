@@ -172,6 +172,24 @@
                         android:text="--" android:textSize="12sp" android:textStyle="bold" android:fontFamily="monospace" />
                 </LinearLayout>
 
+                <!-- Heading row -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginBottom="8dp">
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                        android:text="@string/heading" android:textSize="14sp" />
+                    <TextView android:id="@+id/tvHeading" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="--" android:textSize="14sp" android:textStyle="bold" />
+                </LinearLayout>
+
+                <!-- Elevation row -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginBottom="8dp">
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                        android:text="@string/elevation" android:textSize="14sp" />
+                    <TextView android:id="@+id/tvElevation" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="--" android:textSize="14sp" android:textStyle="bold" />
+                </LinearLayout>
+
                 <!-- Car API Connection -->
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:orientation="horizontal" android:gravity="center_vertical">

@@ -19,6 +19,8 @@
     <string name="odometer">Odometer</string>
     <string name="range">Range</string>
     <string name="gps_location">GPS</string>
+    <string name="heading">Heading</string>
+    <string name="elevation">Elevation</string>
     <string name="car_api">Car API</string>
     <string name="status">Status</string>
     <string name="not_started">Not started</string>
