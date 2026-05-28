@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Explicit light theme — not DayNight — so the car system dark mode can't invert our colors -->
-    <style name="Theme.ABRPTelemetry" parent="Theme.MaterialComponents.Light.DarkActionBar">
+    <!-- DayNight: the framework swaps in values-night/colors.xml whenever the
+         system UI mode reports night. Our colors are all named (no hardcoded
+         hex in the layout), so this is enough to follow the head unit's dark
+         mode without per-widget theme overrides. -->
+    <style name="Theme.ABRPTelemetry" parent="Theme.MaterialComponents.DayNight.DarkActionBar">
         <item name="colorPrimary">@color/primary</item>
         <item name="colorPrimaryVariant">@color/primary_dark</item>
         <item name="colorSecondary">@color/accent</item>
@@ -13,7 +16,5 @@
         <item name="android:textColorPrimary">@color/text_primary</item>
         <item name="android:textColorSecondary">@color/text_secondary</item>
         <item name="android:textColorHint">@color/text_hint</item>
-        <!-- Prevent system force-dark from inverting our explicit colors -->
-        <item name="android:forceDarkAllowed">false</item>
     </style>
 </resources>

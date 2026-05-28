@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark-mode counterparts. Loaded automatically when the system reports the
+         UI mode as night (Configuration.UI_MODE_NIGHT_YES) — i.e. when the head
+         unit is in dark mode. Color names match values/colors.xml; only the
+         hex codes change. -->
+
+    <!-- Slightly lifted primary for better contrast on a dark surface. -->
+    <color name="primary">#4FC3F7</color>
+    <color name="primary_dark">#0288D1</color>
+
+    <color name="background">#121212</color>
+    <color name="surface">#1E1E1E</color>
+    <color name="on_primary">#000000</color>
+
+    <!-- Brighter start/stop so the action button stays legible on dark. -->
+    <color name="btn_start">#66BB6A</color>
+    <color name="btn_stop">#EF5350</color>
+
+    <color name="text_primary">#E0E0E0</color>
+    <color name="text_secondary">#B0B0B0</color>
+    <color name="text_hint">#707070</color>
+    <color name="text_subtle">#9E9E9E</color>
+</resources>

@@ -8,8 +8,10 @@
     <color name="on_primary">#FFFFFF</color>
     <color name="btn_start">#2E7D32</color>
     <color name="btn_stop">#C62828</color>
-    <!-- Explicit text colors so system dark mode can't make them invisible -->
+    <!-- Text colors. The "subtle" variant is used in the layout for secondary
+         labels (e.g. the Car API row); a named resource lets it shift in dark mode. -->
     <color name="text_primary">#212121</color>
     <color name="text_secondary">#616161</color>
     <color name="text_hint">#9E9E9E</color>
+    <color name="text_subtle">#888888</color>
 </resources>
