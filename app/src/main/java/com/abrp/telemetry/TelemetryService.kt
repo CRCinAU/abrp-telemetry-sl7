@@ -387,6 +387,17 @@ class TelemetryService : Service() {
         }
         val lm = getSystemService(LOCATION_SERVICE) as LocationManager
         locationManager = lm
+        // Seed lastLocation with the most recent known fix so the very first send
+        // has GPS data instead of waiting for a listener callback. MainActivity has
+        // been receiving fixes while the user was on screen, so a fresh fix is
+        // almost always already cached at this point.
+        listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER).forEach { provider ->
+            try {
+                val fix = lm.getLastKnownLocation(provider) ?: return@forEach
+                val current = lastLocation
+                if (current == null || fix.time > current.time) lastLocation = fix
+            } catch (_: Exception) {}
+        }
         listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER).forEach { provider ->
             try {
                 if (lm.isProviderEnabled(provider)) {
