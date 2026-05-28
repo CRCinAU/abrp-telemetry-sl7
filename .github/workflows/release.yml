@@ -22,8 +22,28 @@ jobs:
 
       - name: Restore debug keystore
         run: |
+          set -euo pipefail
+          if [ -z "${{ secrets.DEBUG_KEYSTORE }}" ]; then
+            echo "::error::DEBUG_KEYSTORE secret is missing or empty"
+            exit 1
+          fi
           mkdir -p ~/.android
-          echo "${{ secrets.DEBUG_KEYSTORE }}" | base64 -d > ~/.android/debug.keystore
+          # printf %s avoids the extra newline that `echo "$x"` would add.
+          printf '%s' "${{ secrets.DEBUG_KEYSTORE }}" | base64 -d > ~/.android/debug.keystore
+          if [ ! -s ~/.android/debug.keystore ]; then
+            echo "::error::Decoded keystore is empty — DEBUG_KEYSTORE is not valid base64"
+            exit 1
+          fi
+          # Smoke-test with AGP's expected default debug creds. If your keystore
+          # uses different creds, AGP can't sign with it either — regenerate with:
+          #   keytool -genkey -keystore debug.keystore -storepass android \
+          #     -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 \
+          #     -validity 10000 -dname "CN=Android Debug, O=Android, C=US"
+          keytool -list -keystore ~/.android/debug.keystore -storepass android \
+            -alias androiddebugkey > /dev/null
+          echo "Keystore restored ($(stat -c%s ~/.android/debug.keystore) bytes):"
+          keytool -list -v -keystore ~/.android/debug.keystore -storepass android \
+            -alias androiddebugkey | grep -E '^(Owner|SHA256):'
 
       - name: Write API key to local.properties
         run: echo "abrp.api_key=${{ secrets.ABRP_API_KEY }}" >> local.properties
