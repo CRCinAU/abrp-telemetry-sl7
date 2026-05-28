@@ -33,22 +33,37 @@
             </intent-filter>
         </activity>
 
+        <!-- Headless stub launched by the shell-user resurrector daemon via
+             `am start -n com.abrp.telemetry/.WakeActivity` to un-stop the package
+             after BYD's ignition-off forceStopPackage(). finish()es in onCreate. -->
+        <activity
+            android:name=".WakeActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:finishOnTaskLaunch="true" />
+
         <service
             android:name=".TelemetryService"
             android:exported="false"
             android:foregroundServiceType="location" />
 
+        <!-- Two entry points for the service:
+             - BOOT_COMPLETED: after a real head-unit reboot, kick the service if
+               telemetry was running before. (Ignition off/on is *not* a reboot —
+               that path goes through DaemonLauncher → WakeActivity instead.)
+             - AlarmManager periodic ticks: fired via a getBroadcast() PendingIntent
+               that targets this receiver explicitly. Drives the steady-state send
+               cadence while the service is alive. -->
         <receiver
-            android:name=".BootReceiver"
+            android:name=".WakeReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
-
-        <receiver
-            android:name=".TickReceiver"
-            android:exported="false" />
     </application>
 
 </manifest>

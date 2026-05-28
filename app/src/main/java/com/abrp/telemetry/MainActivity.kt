@@ -167,12 +167,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadPreferences() {
         val prefs = getSharedPreferences("abrp_prefs", Context.MODE_PRIVATE)
-        val savedToken = prefs.getString("user_token", "")
+        // resolve() also re-hydrates prefs from /data/local/tmp/abrp-user-token.txt if empty.
+        val savedToken = TokenStore.resolve(this)
         binding.etUserToken.setText(savedToken)
         val savedModel = prefs.getString("car_model", null)
         val entry = carModels.find { it.second == savedModel } ?: carModels[0]
         binding.actvCarModel.setText(entry.first, false)
-        if (!savedToken.isNullOrBlank()) lockTokenInput()
+        if (savedToken.isNotBlank()) lockTokenInput()
     }
 
     private fun lockTokenInput() {
@@ -229,6 +230,7 @@ class MainActivity : AppCompatActivity() {
                 result.fold(
                     onSuccess = {
                         savePreferences()
+                        TokenStore.write(userToken)
                         lockTokenInput()
                         binding.tvStatus.text = getString(R.string.token_valid)
                         appendLog("[${timeFormat.format(Date())}] Token validated successfully")

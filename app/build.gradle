@@ -46,6 +46,18 @@ android {
         viewBinding true
         buildConfig true
     }
+
+    // dadb 1.2.7 transitively pulls JUnit5 as runtime (their packaging glitch); each
+    // junit jar carries its own META-INF/LICENSE*.md, so the resource merger trips.
+    packagingOptions {
+        resources {
+            excludes += [
+                'META-INF/LICENSE.md',
+                'META-INF/LICENSE-notice.md',
+                'META-INF/NOTICE.md',
+            ]
+        }
+    }
 }
 
 dependencies {
@@ -60,4 +72,9 @@ dependencies {
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     implementation 'com.google.code.gson:gson:2.10.1'
     // Removed: play-services-location (not needed on AAOS — using LocationManager directly)
+
+    // dadb: ADB protocol client used by DaemonLauncher to spawn a shell-user resurrector
+    // daemon outside our app's UID, so it survives the BYD vendor's ignition-off
+    // forceStopPackage(). See DaemonLauncher.kt for the rationale.
+    implementation 'dev.mobile:dadb:1.2.7'
 }
