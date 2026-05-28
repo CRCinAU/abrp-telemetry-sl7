@@ -252,6 +252,10 @@ class TelemetryService : Service() {
                 },
             )
             if (running) scheduleNextSend(nextInterval(v))
+            // Piggyback an update check on the send tick — gated by Updater's
+            // 24h cooldown so the actual network fetch happens at most once a
+            // day, and gated on isParked so a drive doesn't get a mid-trip kill.
+            Updater.maybeUpdate(applicationContext, v?.isParked == true)
         }.start()
     }
 

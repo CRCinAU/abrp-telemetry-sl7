@@ -11,6 +11,10 @@ object DebugLog {
     private const val TAG = "AbrpTelemetry"
 
     fun log(component: String, message: String) {
-        Log.i(TAG, "[$component] $message")
+        // Log.w not Log.i: the Sealion 7 sets persist.log.tag=W system-wide, so
+        // anything below Warning is filtered out at the OS level before reaching
+        // logcat. These are lifecycle traces, not real warnings — the priority
+        // is just to make sure they actually show up.
+        Log.w(TAG, "[$component] $message")
     }
 }

@@ -22,19 +22,28 @@ object SettingsStore {
     private const val PREFS = "abrp_prefs"
     private const val KEY_TOKEN = "user_token"
     private const val KEY_CAR_MODEL = "car_model"
+    private const val KEY_AUTO_UPDATE = "auto_update"
+    private const val DEFAULT_AUTO_UPDATE = true
 
     private val gson = Gson()
     private val mapType = object : TypeToken<Map<String, String>>() {}.type
 
-    data class Settings(val userToken: String, val carModel: String) {
+    data class Settings(
+        val userToken: String,
+        val carModel: String,
+        val autoUpdate: Boolean = DEFAULT_AUTO_UPDATE,
+    ) {
         val isEmpty: Boolean get() = userToken.isBlank() && carModel.isBlank()
     }
 
     /** Persist a fresh snapshot of the settings to the JSON file. Best-effort. */
     fun write(settings: Settings): Boolean = try {
-        val payload = linkedMapOf(
+        // String values stay in their own LinkedHashMap; the boolean is gson-ified
+        // alongside via a generic Map<String, Any>.
+        val payload = linkedMapOf<String, Any>(
             KEY_TOKEN to settings.userToken,
             KEY_CAR_MODEL to settings.carModel,
+            KEY_AUTO_UPDATE to settings.autoUpdate,
         )
         File(PATH).writeText(gson.toJson(payload))
         DebugLog.log("SettingsStore", "wrote settings to $PATH")
@@ -49,10 +58,14 @@ object SettingsStore {
         if (text.isBlank()) {
             null
         } else {
-            val map: Map<String, String> = gson.fromJson(text, mapType) ?: emptyMap()
+            // Read as a permissive Map<String, Any> so old token-only / two-field
+            // files still parse and missing fields take their defaults.
+            val anyMapType = object : TypeToken<Map<String, Any>>() {}.type
+            val map: Map<String, Any> = gson.fromJson(text, anyMapType) ?: emptyMap()
             Settings(
-                userToken = map[KEY_TOKEN].orEmpty(),
-                carModel = map[KEY_CAR_MODEL].orEmpty(),
+                userToken = (map[KEY_TOKEN] as? String).orEmpty(),
+                carModel = (map[KEY_CAR_MODEL] as? String).orEmpty(),
+                autoUpdate = (map[KEY_AUTO_UPDATE] as? Boolean) ?: DEFAULT_AUTO_UPDATE,
             ).takeIf { !it.isEmpty }
         }
     } catch (_: Throwable) {
@@ -68,12 +81,14 @@ object SettingsStore {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val storedToken = prefs.getString(KEY_TOKEN, "").orEmpty()
         val storedCar = prefs.getString(KEY_CAR_MODEL, "").orEmpty()
-        if (storedToken.isNotBlank()) return Settings(storedToken, storedCar)
+        val storedAutoUpdate = prefs.getBoolean(KEY_AUTO_UPDATE, DEFAULT_AUTO_UPDATE)
+        if (storedToken.isNotBlank()) return Settings(storedToken, storedCar, storedAutoUpdate)
 
-        val fromFile = readFromFile() ?: return Settings("", storedCar)
+        val fromFile = readFromFile() ?: return Settings("", storedCar, storedAutoUpdate)
         prefs.edit().apply {
             if (fromFile.userToken.isNotBlank()) putString(KEY_TOKEN, fromFile.userToken)
             if (fromFile.carModel.isNotBlank()) putString(KEY_CAR_MODEL, fromFile.carModel)
+            putBoolean(KEY_AUTO_UPDATE, fromFile.autoUpdate)
             apply()
         }
         DebugLog.log("SettingsStore", "restored settings from $PATH into prefs")

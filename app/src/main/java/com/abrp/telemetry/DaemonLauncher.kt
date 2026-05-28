@@ -1,8 +1,6 @@
 package com.abrp.telemetry
 
 import android.content.Context
-import dadb.AdbKeyPair
-import dadb.Dadb
 import java.io.File
 
 /**
@@ -33,14 +31,9 @@ import java.io.File
  */
 object DaemonLauncher {
 
-    private const val ADB_HOST = "127.0.0.1"
-    private const val ADB_PORT = 5555
     private const val SCRIPT_PATH = "/data/local/tmp/abrp-daemon.sh"
     private const val LOG_PATH    = "/data/local/tmp/abrp-daemon.log"
     private const val PID_PATTERN = "abrp-daemon.sh"  // for pkill -f
-
-    private const val PRIVATE_KEY = "adbkey"
-    private const val PUBLIC_KEY  = "adbkey.pub"
 
     private val DAEMON_SCRIPT = """#!/system/bin/sh
 # ABRP Telemetry resurrector — runs as shell (UID 2000).
@@ -64,9 +57,9 @@ done
      * next ignition cycle until this succeeds.
      */
     fun installAndStart(context: Context) {
-        DebugLog.log("Daemon", "installAndStart: connecting to $ADB_HOST:$ADB_PORT")
+        DebugLog.log("Daemon", "installAndStart: connecting via AdbTunnel")
         runCatching {
-            connect(context).use { dadb ->
+            AdbTunnel.connect(context).use { dadb ->
                 // Stop any previous daemon. `; true` so a missing pkill doesn't fail us.
                 dadb.shell("pkill -9 -f $PID_PATTERN; true")
                 // Push fresh script — 0755 so shell can exec.
@@ -95,7 +88,7 @@ done
     fun uninstall(context: Context) {
         DebugLog.log("Daemon", "uninstall: tearing down")
         runCatching {
-            connect(context).use { dadb ->
+            AdbTunnel.connect(context).use { dadb ->
                 dadb.shell("pkill -9 -f $PID_PATTERN; true")
                 dadb.shell("rm -f $SCRIPT_PATH $LOG_PATH")
                 DebugLog.log("Daemon", "uninstalled — script and log removed")
@@ -105,18 +98,4 @@ done
         }
     }
 
-    private fun connect(context: Context): Dadb {
-        val keyPair = getOrCreateKeyPair(context)
-        return Dadb.create(ADB_HOST, ADB_PORT, keyPair)
-    }
-
-    private fun getOrCreateKeyPair(context: Context): AdbKeyPair {
-        val priv = File(context.filesDir, PRIVATE_KEY)
-        val pub  = File(context.filesDir, PUBLIC_KEY)
-        if (!priv.exists() || !pub.exists()) {
-            DebugLog.log("Daemon", "generating ADB keypair under filesDir")
-            AdbKeyPair.generate(priv, pub)
-        }
-        return AdbKeyPair.read(priv, pub)
-    }
 }

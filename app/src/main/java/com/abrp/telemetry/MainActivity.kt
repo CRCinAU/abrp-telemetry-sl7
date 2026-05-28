@@ -14,8 +14,11 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.Gravity
 import android.widget.ArrayAdapter
+import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.ActionBar
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -27,6 +30,9 @@ import java.util.Locale
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
+    // Two TextViews stacked on the right side of the action bar.
+    private var tvInstalled: TextView? = null
+    private var tvLatest: TextView? = null
     private var isServiceRunning = false
     private var isTokenLocked = false
     private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
@@ -54,11 +60,18 @@ class MainActivity : AppCompatActivity() {
     private val statusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             intent ?: return
-            intent.getStringExtra(TelemetryService.EXTRA_STATUS_MESSAGE)?.let { binding.tvStatus.text = it }
-            intent.getStringExtra(TelemetryService.EXTRA_LOG_MESSAGE)?.let { appendLog(it) }
-            if (intent.hasExtra(TelemetryService.EXTRA_IS_RUNNING)) {
-                isServiceRunning = intent.getBooleanExtra(TelemetryService.EXTRA_IS_RUNNING, true)
-                updateStartStopButton()
+            when (intent.action) {
+                Updater.ACTION_STATUS -> {
+                    intent.getStringExtra(Updater.EXTRA_STATUS)?.let { tvLatest?.text = it }
+                }
+                else -> {
+                    intent.getStringExtra(TelemetryService.EXTRA_STATUS_MESSAGE)?.let { binding.tvStatus.text = it }
+                    intent.getStringExtra(TelemetryService.EXTRA_LOG_MESSAGE)?.let { appendLog(it) }
+                    if (intent.hasExtra(TelemetryService.EXTRA_IS_RUNNING)) {
+                        isServiceRunning = intent.getBooleanExtra(TelemetryService.EXTRA_IS_RUNNING, true)
+                        updateStartStopButton()
+                    }
+                }
             }
         }
     }
@@ -67,7 +80,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        binding.tvVersion.text = "v${BuildConfig.VERSION_NAME}"
+        setupActionBarStatus()
         setupCarModelDropdown()
         loadPreferences()
         setupListeners()
@@ -85,6 +98,24 @@ class MainActivity : AppCompatActivity() {
             ContextCompat.startForegroundService(this,
                 Intent(this, TelemetryService::class.java).apply { action = TelemetryService.ACTION_START })
         }
+        // No auto-check on launch — TelemetryService's periodic alarm tick
+        // calls Updater.maybeUpdate() with the 24h cooldown gating it. The
+        // user can still force a check via the toggle flip or the "Check for
+        // updates now" button.
+    }
+
+    /**
+     * Force an auto-update check on a background thread. Used only for explicit
+     * user gestures (the toggle, the Check button). The 3 s sleep lets the
+     * vehicle bind settle so the isParked snapshot is reliable.
+     */
+    private fun triggerUpdateCheck(force: Boolean = false) {
+        val ctx = applicationContext
+        Thread {
+            try { Thread.sleep(3_000) } catch (_: InterruptedException) { return@Thread }
+            val parked = vehicleManager?.snapshot()?.isParked ?: true
+            Updater.maybeUpdate(ctx, parked, force = force)
+        }.start()
     }
 
     override fun onStop() {
@@ -98,7 +129,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        val filter = IntentFilter(TelemetryService.BROADCAST_ACTION)
+        val filter = IntentFilter().apply {
+            addAction(TelemetryService.BROADCAST_ACTION)
+            addAction(Updater.ACTION_STATUS)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(statusReceiver, filter, RECEIVER_NOT_EXPORTED)
         } else {
@@ -109,6 +143,12 @@ class MainActivity : AppCompatActivity() {
         // that fired while the receiver was unregistered (activity paused).
         isServiceRunning = TelemetryService.isRunning
         updateStartStopButton()
+        // Installed: always reflects the *currently running* APK, regardless of
+        // what Updater last persisted. Latest Release: comes from prefs, or a
+        // placeholder if we've never run a check on this install.
+        tvInstalled?.text = "Installed: v${BuildConfig.VERSION_NAME}"
+        tvLatest?.text = Updater.lastLatestLine(this)
+            .ifBlank { "Latest Release: not checked yet" }
     }
 
     override fun onPause() {
@@ -187,12 +227,37 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadPreferences() {
         // resolve() re-hydrates prefs from the JSON backup if prefs is empty
-        // (e.g. just reinstalled), so the call gives us both fields in one shot.
+        // (e.g. just reinstalled), so the call gives us all fields in one shot.
         val settings = SettingsStore.resolve(this)
         binding.etUserToken.setText(settings.userToken)
         val entry = carModels.find { it.second == settings.carModel } ?: carModels[0]
         binding.actvCarModel.setText(entry.first, false)
         if (settings.userToken.isNotBlank()) lockTokenInput()
+        binding.swAutoUpdate.isChecked = settings.autoUpdate
+        // Collapse Settings if the user is already configured; otherwise leave
+        // it open so a fresh install lands with the form ready to fill in.
+        setSettingsCollapsed(settings.userToken.isNotBlank())
+    }
+
+    /** Replace the action bar's contents with a horizontal row carrying both the
+     *  app name (left) and the version/update status (right). The default title
+     *  is suppressed since the custom view provides the app name itself. */
+    private fun setupActionBarStatus() {
+        val bar = supportActionBar ?: return
+        val view = layoutInflater.inflate(R.layout.actionbar_update_status, null)
+        bar.setCustomView(view, ActionBar.LayoutParams(
+            ActionBar.LayoutParams.MATCH_PARENT,
+            ActionBar.LayoutParams.MATCH_PARENT,
+        ))
+        bar.setDisplayShowTitleEnabled(false)
+        bar.setDisplayShowCustomEnabled(true)
+        tvInstalled = view.findViewById(R.id.tvInstalled)
+        tvLatest = view.findViewById(R.id.tvLatest)
+    }
+
+    private fun setSettingsCollapsed(collapsed: Boolean) {
+        binding.settingsContent.visibility = if (collapsed) android.view.View.GONE else android.view.View.VISIBLE
+        binding.tvSettingsChevron.text = if (collapsed) "▶" else "▼"
     }
 
     private fun lockTokenInput() {
@@ -217,13 +282,19 @@ class MainActivity : AppCompatActivity() {
         val token = binding.etUserToken.text.toString().trim()
         val selectedLabel = binding.actvCarModel.text.toString()
         val modelValue = carModels.find { it.first == selectedLabel }?.second ?: carModels[0].second
+        val autoUpdate = binding.swAutoUpdate.isChecked
         getSharedPreferences("abrp_prefs", Context.MODE_PRIVATE).edit().apply {
             putString("user_token", token)
             putString("car_model", modelValue)
+            putBoolean("auto_update", autoUpdate)
             apply()
         }
-        // Also mirror to the JSON backup so a future reinstall can restore both fields.
-        SettingsStore.write(SettingsStore.Settings(userToken = token, carModel = modelValue))
+        // Also mirror to the JSON backup so a future reinstall can restore the fields.
+        SettingsStore.write(SettingsStore.Settings(
+            userToken = token,
+            carModel = modelValue,
+            autoUpdate = autoUpdate,
+        ))
     }
 
     private fun setupCarModelDropdown() {
@@ -237,6 +308,21 @@ class MainActivity : AppCompatActivity() {
             if (isServiceRunning) stopTelemetryService() else startTelemetryService()
         }
         binding.btnClearLog.setOnClickListener { binding.tvLog.text = "" }
+        binding.settingsHeader.setOnClickListener {
+            setSettingsCollapsed(binding.settingsContent.visibility == android.view.View.VISIBLE)
+        }
+        binding.btnCheckUpdate.setOnClickListener { triggerUpdateCheck(force = true) }
+        binding.swAutoUpdate.setOnCheckedChangeListener { _, isChecked ->
+            getSharedPreferences("abrp_prefs", Context.MODE_PRIVATE)
+                .edit().putBoolean("auto_update", isChecked).apply()
+            // Mirror to the JSON backup. savePreferences would also drag the token
+            // and car model in, which we don't need here — just patch the flag.
+            val existing = SettingsStore.resolve(this)
+            SettingsStore.write(existing.copy(autoUpdate = isChecked))
+            // Flipping the toggle on counts as a manual trigger — bypass the
+            // 24h cooldown so the check runs immediately.
+            if (isChecked) triggerUpdateCheck(force = true)
+        }
     }
 
     private fun validateToken() {

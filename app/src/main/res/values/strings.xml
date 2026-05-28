@@ -2,10 +2,13 @@
 <resources>
     <string name="app_name">ABRP Telemetry</string>
     <string name="credentials">Credentials</string>
+    <string name="settings">Settings</string>
     <string name="user_token_hint">ABRP User Token</string>
     <string name="user_token_helper">Get from ABRP app: Settings → Live Data → Copy Token</string>
     <string name="validate_and_save">Validate and Save</string>
     <string name="edit_values">Edit Values</string>
+    <string name="auto_update">Auto-update from GitHub releases (once every 24 hours, while parked)</string>
+    <string name="check_for_updates">Check for updates now</string>
     <string name="validating">Validating…</string>
     <string name="validating_status">Contacting ABRP server…</string>
     <string name="token_valid">Token valid — ready to send</string>
