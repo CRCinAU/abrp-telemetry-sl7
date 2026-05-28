@@ -186,10 +186,10 @@ class TelemetryService : Service() {
 
     private fun sendTelemetry() {
         DebugLog.log("Send", "triggered")
-        val userToken = TokenStore.resolve(this)
+        val settings = SettingsStore.resolve(this)
+        val userToken = settings.userToken
         val apiKey = BuildConfig.ABRP_API_KEY
-        val carModel = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getString("car_model", "")?.takeIf { it.isNotBlank() }
+        val carModel = settings.carModel.takeIf { it.isNotBlank() }
 
         if (userToken.isBlank() || apiKey.isBlank()) {
             DebugLog.log("Send", "skipped: token or API key not configured")

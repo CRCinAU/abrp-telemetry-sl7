@@ -186,14 +186,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadPreferences() {
-        val prefs = getSharedPreferences("abrp_prefs", Context.MODE_PRIVATE)
-        // resolve() also re-hydrates prefs from /data/local/tmp/abrp-user-token.txt if empty.
-        val savedToken = TokenStore.resolve(this)
-        binding.etUserToken.setText(savedToken)
-        val savedModel = prefs.getString("car_model", null)
-        val entry = carModels.find { it.second == savedModel } ?: carModels[0]
+        // resolve() re-hydrates prefs from the JSON backup if prefs is empty
+        // (e.g. just reinstalled), so the call gives us both fields in one shot.
+        val settings = SettingsStore.resolve(this)
+        binding.etUserToken.setText(settings.userToken)
+        val entry = carModels.find { it.second == settings.carModel } ?: carModels[0]
         binding.actvCarModel.setText(entry.first, false)
-        if (savedToken.isNotBlank()) lockTokenInput()
+        if (settings.userToken.isNotBlank()) lockTokenInput()
     }
 
     private fun lockTokenInput() {
@@ -215,13 +214,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun savePreferences() {
+        val token = binding.etUserToken.text.toString().trim()
+        val selectedLabel = binding.actvCarModel.text.toString()
+        val modelValue = carModels.find { it.first == selectedLabel }?.second ?: carModels[0].second
         getSharedPreferences("abrp_prefs", Context.MODE_PRIVATE).edit().apply {
-            putString("user_token", binding.etUserToken.text.toString().trim())
-            val selectedLabel = binding.actvCarModel.text.toString()
-            val modelValue = carModels.find { it.first == selectedLabel }?.second ?: carModels[0].second
+            putString("user_token", token)
             putString("car_model", modelValue)
             apply()
         }
+        // Also mirror to the JSON backup so a future reinstall can restore both fields.
+        SettingsStore.write(SettingsStore.Settings(userToken = token, carModel = modelValue))
     }
 
     private fun setupCarModelDropdown() {
@@ -257,8 +259,8 @@ class MainActivity : AppCompatActivity() {
                 binding.btnValidate.isEnabled = true
                 result.fold(
                     onSuccess = {
+                        // savePreferences() mirrors to the JSON file in one step now.
                         savePreferences()
-                        TokenStore.write(userToken)
                         lockTokenInput()
                         binding.tvStatus.text = getString(R.string.token_valid)
                         appendLog("[${timeFormat.format(Date())}] Token validated successfully")
