@@ -180,6 +180,8 @@ class MainActivity : AppCompatActivity() {
         isTokenLocked = true
         binding.tilUserToken.isEnabled = false
         binding.etUserToken.isEnabled = false
+        binding.tilCarModel.isEnabled = false
+        binding.actvCarModel.isEnabled = false
         binding.btnValidate.text = getString(R.string.edit_values)
     }
 
@@ -187,6 +189,8 @@ class MainActivity : AppCompatActivity() {
         isTokenLocked = false
         binding.tilUserToken.isEnabled = true
         binding.etUserToken.isEnabled = true
+        binding.tilCarModel.isEnabled = true
+        binding.actvCarModel.isEnabled = true
         binding.btnValidate.text = getString(R.string.validate_and_save)
     }
 
@@ -223,8 +227,12 @@ class MainActivity : AppCompatActivity() {
         binding.btnValidate.text = getString(R.string.validating)
         binding.tvStatus.text = getString(R.string.validating_status)
 
+        // Capture the SOC from the live snapshot on the main thread; the validation
+        // HTTP call goes off-thread but we want the reading taken now, not later.
+        val soc = vehicleManager?.snapshot()?.socPercent?.toDouble()
+
         Thread {
-            val result = ApiClient().validateToken(userToken, BuildConfig.ABRP_API_KEY)
+            val result = ApiClient().validateToken(userToken, BuildConfig.ABRP_API_KEY, soc)
             runOnUiThread {
                 binding.btnValidate.isEnabled = true
                 result.fold(

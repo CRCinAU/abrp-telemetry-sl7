@@ -21,11 +21,26 @@ class ApiClient {
 
     private data class ApiResponse(val status: String?, val message: String?)
 
-    fun sendTelemetry(userToken: String, apiKey: String, data: TelemetryData): Result<String> {
-        return try {
-            val tlmJson = buildTlmJson(data)
-            val url = buildUrl(userToken, apiKey, tlmJson)
+    fun sendTelemetry(userToken: String, apiKey: String, data: TelemetryData): Result<String> =
+        post(userToken, apiKey, buildTlmJson(data))
 
+    // Validation pings the API with a minimal payload — utc (required by ABRP) plus
+    // the current SOC if we have a real reading. Caller passes the live SOC from the
+    // vehicle snapshot; nulls or non-positive values are omitted so we never lie to
+    // ABRP about a zero state of charge during validation.
+    fun validateToken(userToken: String, apiKey: String, soc: Double?): Result<String> {
+        val utc = System.currentTimeMillis() / 1000
+        val tlm = buildString {
+            append("{\"utc\":").append(utc)
+            soc?.takeIf { it > 0.0 }?.let { append(",\"soc\":").append(it) }
+            append("}")
+        }
+        return post(userToken, apiKey, tlm)
+    }
+
+    private fun post(userToken: String, apiKey: String, tlmJson: String): Result<String> {
+        return try {
+            val url = buildUrl(userToken, apiKey, tlmJson)
             val request = Request.Builder().url(url).get().build()
             val response = client.newCall(request).execute()
             val body = response.body?.string() ?: "{}"
@@ -43,18 +58,6 @@ class ApiClient {
         } catch (e: Exception) {
             Result.failure(e)
         }
-    }
-
-    fun validateToken(userToken: String, apiKey: String): Result<String> {
-        val testData = TelemetryData(
-            utc = System.currentTimeMillis() / 1000,
-            soc = 50.0,
-            speed = 0.0,
-            is_charging = 0,
-            is_dcfc = 0,
-            is_parked = 1
-        )
-        return sendTelemetry(userToken, apiKey, testData)
     }
 
     private fun buildTlmJson(data: TelemetryData): String {
