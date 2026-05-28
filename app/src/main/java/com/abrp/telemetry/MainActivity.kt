@@ -314,6 +314,22 @@ class MainActivity : AppCompatActivity() {
         )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) needed.add(Manifest.permission.POST_NOTIFICATIONS)
         val missing = needed.filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
-        if (missing.isNotEmpty()) ActivityCompat.requestPermissions(this, missing.toTypedArray(), 100)
+        if (missing.isNotEmpty()) ActivityCompat.requestPermissions(this, missing.toTypedArray(), REQUEST_CODE_PERMISSIONS)
+    }
+
+    // Permission grants come back asynchronously. onCreate already kicked off
+    // startGpsDisplay() before the user tapped Allow, so it bailed out at the
+    // permission check — re-run it here so we start receiving fixes immediately
+    // without needing the user to background+resume the app.
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQUEST_CODE_PERMISSIONS) return
+        val locationGranted = permissions.zip(grantResults.toTypedArray())
+            .any { (p, r) -> p == Manifest.permission.ACCESS_FINE_LOCATION && r == PackageManager.PERMISSION_GRANTED }
+        if (locationGranted && locationManager == null) startGpsDisplay()
+    }
+
+    companion object {
+        private const val REQUEST_CODE_PERMISSIONS = 100
     }
 }
