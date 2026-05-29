@@ -103,13 +103,18 @@ object Updater {
                 report(context, null, "auto-update off")
                 return
             }
-            // Bail BEFORE hitting GitHub when we're not parked — otherwise every
-            // send tick during a drive (10s cadence) re-fetches the releases API
-            // and quickly trips the 60 req/hr unauthenticated rate limit. The
-            // previously-persisted "Latest Release:" line stays on screen until
-            // the next parked tick takes a fresh reading.
-            if (!isParked) {
-                DebugLog.log("Updater", "skipping — not parked (no GitHub fetch)")
+            // Two distinct concerns used to share this one guard, which made a
+            // manual "Check for updates now" silently no-op whenever the
+            // vehicleManager wasn't reporting (activity just opened, binder
+            // disconnected, car API failed to bind). Split them:
+            //
+            //  - Automatic ticks during a drive must NOT fetch — 10 s cadence
+            //    × 6 req/min would trip the 60 req/hr unauthenticated limit.
+            //  - Manual (force=true) calls should always fetch + report so the
+            //    user gets visible feedback; the parked check is re-applied
+            //    just before the install step to avoid mid-drive SIGKILLs.
+            if (!force && !isParked) {
+                DebugLog.log("Updater", "skipping — not parked, not forced (no GitHub fetch)")
                 return
             }
             val now = System.currentTimeMillis()
@@ -137,6 +142,17 @@ object Updater {
             val asset = release.assets.firstOrNull { it.name.endsWith(ASSET_SUFFIX) }
             if (asset == null) {
                 report(context, latestTag, "no $ASSET_SUFFIX asset in release ${release.tag}")
+                recordCheck(prefs, now)
+                return
+            }
+
+            // Hold off on the actual install when we can't confirm the car is
+            // parked — pm install -r SIGKILLs us mid-drive otherwise. The
+            // check ran fine (status text now shows the new version), and the
+            // next parked tick will pick the install up. recordCheck so we
+            // don't refetch every send tick while waiting to park.
+            if (!isParked) {
+                report(context, latestTag, "v$latestTag available — will install when parked")
                 recordCheck(prefs, now)
                 return
             }
