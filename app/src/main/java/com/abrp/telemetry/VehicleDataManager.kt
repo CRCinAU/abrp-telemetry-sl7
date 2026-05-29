@@ -16,10 +16,18 @@ class VehicleDataManager(private val context: Context) {
         private const val TAG = "VehicleDataManager"
         private const val DCFC_THRESHOLD_KW = 7.5f
         private const val CHARGING_THRESHOLD_KW = 0.1f
-        private const val GEAR_PARK = 1
-        private const val GEAR_REVERSE = 2  // inferred from sequence P=1,N=3,D=4; never observed — 360 camera activates on R and kills CarAdapterService before any poll can catch it
-        private const val GEAR_NEUTRAL = 3
-        const val GEAR_DRIVE = 4
+        const val GEAR_PARK    = 1
+        const val GEAR_REVERSE = 2  // inferred from sequence P=1,N=3,D=4; never observed — 360 camera activates on R and kills CarAdapterService before any poll can catch it
+        const val GEAR_NEUTRAL = 3
+        const val GEAR_DRIVE   = 4
+
+        fun shiftLabel(shiftMode: Int): String = when (shiftMode) {
+            GEAR_PARK    -> "P"
+            GEAR_REVERSE -> "R"
+            GEAR_NEUTRAL -> "N"
+            GEAR_DRIVE   -> "D"
+            else         -> "?"
+        }
     }
 
     data class VehicleState(
@@ -128,8 +136,13 @@ class VehicleDataManager(private val context: Context) {
 
         val speed = if (sm != null) tryGet("speed") { sm.currentSpeed } ?: state.speedKmh else state.speedKmh
         // Outside air temp comes from HVAC manager, not sensor manager (sensor returns 0.0).
+        // BYD's HVAC adapter reports the value as plain °C (Int). 0 is a "no reading"
+        // sentinel — not literal 0°C — and the adapter has also been observed
+        // returning 195 (and similar wildly out-of-range values) when the HVAC
+        // module hasn't initialised yet, so clamp to a plausible outside-air range.
         val temp: Float? = if (hm != null) {
-            tryGet("tempOut") { hm.tempratureOut }?.takeIf { it != 0 }?.toFloat() ?: state.outsideTempC
+            tryGet("tempOut") { hm.tempratureOut }?.takeIf { it in -50..60 && it != 0 }?.toFloat()
+                ?: state.outsideTempC
         } else state.outsideTempC
         val soc = if (gm != null) tryGet("soc") { gm.elecPercentageValue } ?: state.socPercent else state.socPercent
         val odo = if (gm != null) tryGet("odo") { gm.totalMileageValue } ?: state.odometerKm else state.odometerKm

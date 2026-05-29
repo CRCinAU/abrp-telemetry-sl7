@@ -242,7 +242,17 @@ class TelemetryService : Service() {
                     val gpsStr = if (data.lat != null)
                         ", lat=${"%.4f".format(data.lat)}, lon=${"%.4f".format(data.lon)}"
                     else ", no GPS"
-                    DebugLog.log("Send", "OK $socStr spd=${data.speed.toInt()}km/h$gpsStr$chg")
+                    val tempStr  = data.ext_temp?.let { ", temp=${"%.1f".format(it)}°C" } ?: ", temp=--"
+                    val pwrStr   = data.power?.let { ", power=${"%.1f".format(it)}kW" } ?: ""
+                    val rangeStr = data.est_battery_range?.let { ", range=${it.toInt()}km" } ?: ""
+                    val headStr  = data.heading?.let { ", hdg=${it.toInt()}°" } ?: ""
+                    val elevStr  = data.elevation?.let { ", elev=${it.toInt()}m" } ?: ""
+                    val shiftModeStr = v?.shiftMode?.takeIf { it >= 0 }
+                        ?.let { ", shiftMode=${VehicleDataManager.shiftLabel(it)}" } ?: ""
+                    DebugLog.log(
+                        "Send",
+                        "OK $socStr spd=${data.speed.toInt()}km/h$gpsStr$tempStr$pwrStr$rangeStr$headStr$elevStr$shiftModeStr$chg",
+                    )
                     broadcast(
                         logMessage    = "[$time] OK — $socStr, spd=${data.speed.toInt()}km/h$gpsStr$chg",
                         statusMessage = intervalDescription(v),
