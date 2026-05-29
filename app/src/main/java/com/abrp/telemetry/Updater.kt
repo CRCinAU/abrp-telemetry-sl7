@@ -9,6 +9,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Auto-update. Checks GitHub Releases, verifies the downloaded APK is signed with
@@ -45,6 +46,14 @@ object Updater {
     const val ACTION_STATUS = "com.abrp.telemetry.UPDATER_STATUS"
     const val EXTRA_STATUS  = "status_text"
 
+    // Non-blocking guard against re-entrant or concurrent maybeUpdate calls
+    // (periodic send tick vs. manual "Check for updates" button). The previous
+    // @Synchronized held the singleton's monitor for the full call — up to 70+
+    // seconds with a slow GitHub fetch + APK download + pm install — which made
+    // a second caller block on the monitor instead of fast-failing. CAS lets
+    // the loser bail immediately; try/finally guarantees release on any exit.
+    private val inFlight = AtomicBoolean(false)
+
     private val http = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
@@ -77,78 +86,90 @@ object Updater {
      *   - the vehicle isn't parked (we silently defer without hitting the
      *     GitHub API; the previously-rendered status stays visible)
      */
-    @Synchronized
     fun maybeUpdate(context: Context, isParked: Boolean, force: Boolean = false) {
-        val current = BuildConfig.VERSION_NAME
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        if (!prefs.getBoolean(PREF_AUTO_UPDATE, DEFAULT_AUTO_UPDATE)) {
-            report(context, null, "auto-update off")
+        // Fast-fail re-entrant / concurrent calls instead of blocking on a monitor.
+        // The previous @Synchronized variant would freeze a "Check for updates now"
+        // button-thread for the full duration of an in-flight periodic check
+        // (~70+ s worst case). With CAS the second caller logs + returns
+        // immediately; cleared in finally so a crash mid-call still releases it.
+        if (!inFlight.compareAndSet(false, true)) {
+            DebugLog.log("Updater", "skipping — check already in flight")
             return
         }
-        // Bail BEFORE hitting GitHub when we're not parked — otherwise every
-        // send tick during a drive (10s cadence) re-fetches the releases API
-        // and quickly trips the 60 req/hr unauthenticated rate limit. The
-        // previously-persisted "Latest Release:" line stays on screen until
-        // the next parked tick takes a fresh reading.
-        if (!isParked) {
-            DebugLog.log("Updater", "skipping — not parked (no GitHub fetch)")
-            return
-        }
-        val now = System.currentTimeMillis()
-        val lastCheckMs = prefs.getLong(PREF_LAST_CHECK_MS, 0L)
-        if (!force && now - lastCheckMs < CHECK_COOLDOWN_MS) {
-            val hoursLeft = (CHECK_COOLDOWN_MS - (now - lastCheckMs)) / (60 * 60 * 1000)
-            DebugLog.log("Updater", "skipping — within 24h cooldown (~${hoursLeft}h left)")
-            return  // don't churn the visible status text for routine cooldown skips
-        }
+        try {
+            val current = BuildConfig.VERSION_NAME
+            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            if (!prefs.getBoolean(PREF_AUTO_UPDATE, DEFAULT_AUTO_UPDATE)) {
+                report(context, null, "auto-update off")
+                return
+            }
+            // Bail BEFORE hitting GitHub when we're not parked — otherwise every
+            // send tick during a drive (10s cadence) re-fetches the releases API
+            // and quickly trips the 60 req/hr unauthenticated rate limit. The
+            // previously-persisted "Latest Release:" line stays on screen until
+            // the next parked tick takes a fresh reading.
+            if (!isParked) {
+                DebugLog.log("Updater", "skipping — not parked (no GitHub fetch)")
+                return
+            }
+            val now = System.currentTimeMillis()
+            val lastCheckMs = prefs.getLong(PREF_LAST_CHECK_MS, 0L)
+            if (!force && now - lastCheckMs < CHECK_COOLDOWN_MS) {
+                val hoursLeft = (CHECK_COOLDOWN_MS - (now - lastCheckMs)) / (60 * 60 * 1000)
+                DebugLog.log("Updater", "skipping — within 24h cooldown (~${hoursLeft}h left)")
+                return  // don't churn the visible status text for routine cooldown skips
+            }
 
-        report(context, null, "checking…")
-        val release = runCatching { fetchLatest() }.getOrElse {
-            report(context, null, "check failed: ${it.message}")
-            recordCheck(prefs, now)  // back off — don't retry the failed fetch every tick
-            return
-        }
+            report(context, null, "checking…")
+            val release = runCatching { fetchLatest() }.getOrElse {
+                report(context, null, "check failed: ${it.message}")
+                recordCheck(prefs, now)  // back off — don't retry the failed fetch every tick
+                return
+            }
 
-        val latestTag = release.tag.removePrefix("v")
-        if (!isNewer(latestTag, current)) {
-            report(context, latestTag, "up to date")
+            val latestTag = release.tag.removePrefix("v")
+            if (!isNewer(latestTag, current)) {
+                report(context, latestTag, "up to date")
+                recordCheck(prefs, now)
+                return
+            }
+
+            val asset = release.assets.firstOrNull { it.name.endsWith(ASSET_SUFFIX) }
+            if (asset == null) {
+                report(context, latestTag, "no $ASSET_SUFFIX asset in release ${release.tag}")
+                recordCheck(prefs, now)
+                return
+            }
+
+            report(context, latestTag, "downloading…")
+            val apk = runCatching { downloadApk(context, asset.url) }.getOrElse {
+                report(context, latestTag, "download failed: ${it.message}")
+                recordCheck(prefs, now)  // back off — wait 24h before re-downloading a flaky asset
+                return
+            }
+
+            report(context, latestTag, "verifying…")
+            if (!signatureMatches(context, apk)) {
+                report(context, latestTag, "signature mismatch — refusing to install")
+                apk.delete()
+                recordCheck(prefs, now)  // back off — a mis-signed release won't fix itself in 10s
+                return
+            }
+
+            report(context, latestTag, "installing…")
+            // recordCheck BEFORE installViaShell: pm install -r SIGKILLs our process
+            // mid-call as it swaps the APK, so anything after this line is racing the
+            // kill. Bumping the cooldown first guarantees the next post-resurrect
+            // tick doesn't spuriously re-fetch GitHub before realising it's now on
+            // the latest version.
             recordCheck(prefs, now)
-            return
-        }
-
-        val asset = release.assets.firstOrNull { it.name.endsWith(ASSET_SUFFIX) }
-        if (asset == null) {
-            report(context, latestTag, "no $ASSET_SUFFIX asset in release ${release.tag}")
-            recordCheck(prefs, now)
-            return
-        }
-
-        report(context, latestTag, "downloading…")
-        val apk = runCatching { downloadApk(context, asset.url) }.getOrElse {
-            report(context, latestTag, "download failed: ${it.message}")
-            recordCheck(prefs, now)  // back off — wait 24h before re-downloading a flaky asset
-            return
-        }
-
-        report(context, latestTag, "verifying…")
-        if (!signatureMatches(context, apk)) {
-            report(context, latestTag, "signature mismatch — refusing to install")
+            runCatching { installViaShell(context, apk) }
+                .onSuccess { report(context, latestTag, "installed, restarting") }
+                .onFailure { report(context, latestTag, "install failed: ${it.message}") }
             apk.delete()
-            recordCheck(prefs, now)  // back off — a mis-signed release won't fix itself in 10s
-            return
+        } finally {
+            inFlight.set(false)
         }
-
-        report(context, latestTag, "installing…")
-        // recordCheck BEFORE installViaShell: pm install -r SIGKILLs our process
-        // mid-call as it swaps the APK, so anything after this line is racing the
-        // kill. Bumping the cooldown first guarantees the next post-resurrect
-        // tick doesn't spuriously re-fetch GitHub before realising it's now on
-        // the latest version.
-        recordCheck(prefs, now)
-        runCatching { installViaShell(context, apk) }
-            .onSuccess { report(context, latestTag, "installed, restarting") }
-            .onFailure { report(context, latestTag, "install failed: ${it.message}") }
-        apk.delete()
     }
 
     /** Format the right-hand "Latest Release" line. When the latest tag isn't
