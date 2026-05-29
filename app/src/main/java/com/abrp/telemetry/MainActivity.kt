@@ -43,7 +43,11 @@ class MainActivity : AppCompatActivity() {
         "Sealion 7 Excellence AWD (91 kWh)" to "byd:sealion:25:91:awd"
     )
 
-    private var vehicleManager: VehicleDataManager? = null
+    // @Volatile because triggerUpdateCheck's worker thread reads this field
+    // after a 3s sleep, and onStop() (main thread) can null it during that
+    // window. Volatile gives us a well-defined happens-before so the worker
+    // can never observe a stale non-null pointer to a disconnected manager.
+    @Volatile private var vehicleManager: VehicleDataManager? = null
     private var locationManager: LocationManager? = null
 
     private val refreshHandler = Handler(Looper.getMainLooper())
@@ -113,7 +117,11 @@ class MainActivity : AppCompatActivity() {
         val ctx = applicationContext
         Thread {
             try { Thread.sleep(3_000) } catch (_: InterruptedException) { return@Thread }
-            val parked = vehicleManager?.snapshot()?.isParked ?: true
+            // == true so null (activity backgrounded mid-sleep — vehicleManager
+            // got nulled) AND a freshly-bound-but-not-yet-reporting manager
+            // both fall through to "not parked". Conservative: don't install
+            // when we can't confirm the vehicle is stationary.
+            val parked = vehicleManager?.snapshot()?.isParked == true
             Updater.maybeUpdate(ctx, parked, force = force)
         }.start()
     }

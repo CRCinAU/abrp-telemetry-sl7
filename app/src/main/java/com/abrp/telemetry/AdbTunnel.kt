@@ -24,6 +24,11 @@ internal object AdbTunnel {
         return Dadb.create(ADB_HOST, ADB_PORT, keyPair)
     }
 
+    // Synchronized so concurrent callers (e.g. DaemonLauncher.installAndStart on
+    // its own Thread and Updater.installViaShell on the send-tick Thread) can't
+    // both observe absent files and both call generate(), racing on disk writes
+    // and producing a mismatched (priv, pub) pair that breaks ADB auth.
+    @Synchronized
     private fun getOrCreateKeyPair(context: Context): AdbKeyPair {
         val priv = File(context.filesDir, PRIVATE_KEY)
         val pub  = File(context.filesDir, PUBLIC_KEY)
