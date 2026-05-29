@@ -13,6 +13,47 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history + tags so the monotonicity check below can read the
+          # previous v-tag's commit timestamp. Default checkout is shallow
+          # (depth=1) and would leave `git log "$PREV^{commit}"` failing with
+          # "unknown revision".
+          fetch-depth: 0
+
+      - name: Verify versionCode monotonicity
+        run: |
+          set -euo pipefail
+          # gitCommitTime() in app/build.gradle derives versionCode from the
+          # current commit's unix timestamp. If a tag is pushed against a
+          # commit older than the previous release's commit (cherry-pick
+          # hotfix, rebase with --committer-date-is-author-date, etc.) the
+          # resulting versionCode regresses and pm install -r rejects the
+          # APK as a downgrade — permanently wedging existing installs on
+          # the old version. Catch that here instead of after release.
+          CUR="${GITHUB_REF_NAME}"
+          PREV=$(git tag --sort=-creatordate --list 'v*' \
+            | grep -v "^${CUR}$" | head -1 || true)
+          if [ -z "$PREV" ]; then
+            echo "First v-tag (no predecessor); skipping monotonicity check."
+            exit 0
+          fi
+          CUR_TS=$(git log -1 --format=%ct "${CUR}^{commit}")
+          PREV_TS=$(git log -1 --format=%ct "${PREV}^{commit}")
+          echo "Current  ${CUR}: versionCode=${CUR_TS}"
+          echo "Previous ${PREV}: versionCode=${PREV_TS}"
+          if [ "$CUR_TS" -le "$PREV_TS" ]; then
+            echo "::error::versionCode would regress: ${CUR}(${CUR_TS}) <= ${PREV}(${PREV_TS})"
+            echo "::error::pm install -r will reject this APK as a downgrade. Re-tag from a newer commit."
+            exit 1
+          fi
+          # Clock-skewed commits dated in the future would bake a versionCode
+          # that no sane future release can exceed — refuse them too.
+          NOW=$(date +%s)
+          if [ "$CUR_TS" -gt "$NOW" ]; then
+            echo "::error::Commit timestamp ${CUR_TS} is in the future (now=${NOW})."
+            echo "::error::Refusing to ship a versionCode that future releases can't exceed."
+            exit 1
+          fi
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
