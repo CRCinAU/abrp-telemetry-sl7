@@ -73,8 +73,8 @@ object Updater {
      *   - auto-update is disabled by pref
      *   - we already checked within [CHECK_COOLDOWN_MS] (unless [force])
      *   - no newer release is available
-     *   - the vehicle isn't parked (we defer; the cooldown timestamp isn't
-     *     bumped so the next call retries while still parked)
+     *   - the vehicle isn't parked (we silently defer without hitting the
+     *     GitHub API; the previously-rendered status stays visible)
      */
     @Synchronized
     fun maybeUpdate(context: Context, isParked: Boolean, force: Boolean = false) {
@@ -82,6 +82,15 @@ object Updater {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         if (!prefs.getBoolean(PREF_AUTO_UPDATE, DEFAULT_AUTO_UPDATE)) {
             report(context, null, "auto-update off")
+            return
+        }
+        // Bail BEFORE hitting GitHub when we're not parked — otherwise every
+        // send tick during a drive (10s cadence) re-fetches the releases API
+        // and quickly trips the 60 req/hr unauthenticated rate limit. The
+        // previously-persisted "Latest Release:" line stays on screen until
+        // the next parked tick takes a fresh reading.
+        if (!isParked) {
+            DebugLog.log("Updater", "skipping — not parked (no GitHub fetch)")
             return
         }
         val now = System.currentTimeMillis()
@@ -95,6 +104,7 @@ object Updater {
         report(context, null, "checking…")
         val release = runCatching { fetchLatest() }.getOrElse {
             report(context, null, "check failed: ${it.message}")
+            recordCheck(prefs, now)  // back off — don't retry the failed fetch every tick
             return
         }
 
@@ -102,11 +112,6 @@ object Updater {
         if (!isNewer(latestTag, current)) {
             report(context, latestTag, "up to date")
             recordCheck(prefs, now)
-            return
-        }
-
-        if (!isParked) {
-            report(context, latestTag, "waiting until parked")
             return
         }
 
@@ -120,6 +125,7 @@ object Updater {
         report(context, latestTag, "downloading…")
         val apk = runCatching { downloadApk(context, asset.url) }.getOrElse {
             report(context, latestTag, "download failed: ${it.message}")
+            recordCheck(prefs, now)  // back off — wait 24h before re-downloading a flaky asset
             return
         }
 
@@ -127,6 +133,7 @@ object Updater {
         if (!signatureMatches(context, apk)) {
             report(context, latestTag, "signature mismatch — refusing to install")
             apk.delete()
+            recordCheck(prefs, now)  // back off — a mis-signed release won't fix itself in 10s
             return
         }
 
