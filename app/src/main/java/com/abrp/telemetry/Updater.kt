@@ -28,6 +28,7 @@ object Updater {
     private const val ASSET_SUFFIX = "-debug.apk"
     private const val REMOTE_APK_PATH = "/data/local/tmp/abrp-update.apk"
     private const val CHECK_COOLDOWN_MS = 24L * 60 * 60 * 1000  // 24h
+    private const val MAX_APK_BYTES = 50L * 1024 * 1024         // 50 MB; our APKs are ~7 MB
     private const val PREFS = "abrp_prefs"
     private const val PREF_AUTO_UPDATE = "auto_update"
     private const val PREF_LAST_CHECK_MS = "updater_last_check_ms"
@@ -138,11 +139,16 @@ object Updater {
         }
 
         report(context, latestTag, "installing…")
+        // recordCheck BEFORE installViaShell: pm install -r SIGKILLs our process
+        // mid-call as it swaps the APK, so anything after this line is racing the
+        // kill. Bumping the cooldown first guarantees the next post-resurrect
+        // tick doesn't spuriously re-fetch GitHub before realising it's now on
+        // the latest version.
+        recordCheck(prefs, now)
         runCatching { installViaShell(context, apk) }
             .onSuccess { report(context, latestTag, "installed, restarting") }
             .onFailure { report(context, latestTag, "install failed: ${it.message}") }
         apk.delete()
-        recordCheck(prefs, now)
     }
 
     /** Format the right-hand "Latest Release" line. When the latest tag isn't
@@ -202,7 +208,28 @@ object Updater {
         http.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) throw RuntimeException("HTTP ${resp.code}")
             val body = resp.body ?: throw RuntimeException("empty body")
-            out.outputStream().use { dst -> body.byteStream().copyTo(dst) }
+            // Reject up front when the server-declared size already exceeds the cap.
+            val declared = body.contentLength()
+            if (declared > MAX_APK_BYTES) {
+                throw RuntimeException("asset too large: $declared bytes > $MAX_APK_BYTES cap")
+            }
+            // Stream with a running counter — Content-Length can be missing or
+            // wrong, and we don't want to fill cacheDir before noticing.
+            out.outputStream().use { dst ->
+                val buf = ByteArray(8192)
+                val input = body.byteStream()
+                var total = 0L
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    total += n
+                    if (total > MAX_APK_BYTES) {
+                        out.delete()
+                        throw RuntimeException("asset exceeded $MAX_APK_BYTES byte cap mid-stream")
+                    }
+                    dst.write(buf, 0, n)
+                }
+            }
         }
         return out
     }
@@ -222,7 +249,10 @@ object Updater {
 
     private fun installViaShell(context: Context, apk: File) {
         AdbTunnel.connect(context).use { dadb ->
-            dadb.push(apk, REMOTE_APK_PATH, "644".toInt(8), System.currentTimeMillis())
+            // 0600 (not 0644) — only the shell user invoking pm install needs to
+            // read the staged APK. Don't make freshly-downloaded builds
+            // world-readable on /data/local/tmp during the install window.
+            dadb.push(apk, REMOTE_APK_PATH, "600".toInt(8), System.currentTimeMillis())
             // Chain pm install + cleanup so the temp file is removed even if pm fails
             // or if our app process is killed mid-install (the shell session lives
             // under UID 2000 and keeps running after our UID dies). pm prints
@@ -263,27 +293,26 @@ object Updater {
 
     private data class Describe(val base: IntArray, val commitsAhead: Int)
 
-    /** Parse "1.0.4", "v1.0.4", "1.0.4-3-gabc", "1.0.4-3" into (base, commits).
-     *  Anything else (SHA-only "gabc123", "dev", malformed) returns null. */
+    /** Parse "1.0.4", "v1.0.4", "1.0.4-N-gHEX" into (base, commitsAhead).
+     *  The dashed form is strictly the git-describe shape — "BASE-N-gHEX"
+     *  where N is a non-negative int and HEX is a hex SHA prefix. Anything
+     *  else (pre-release tags like "1.0.4-rc1", "1.0.4-beta", or anything a
+     *  maintainer might tag a release with that isn't strict semver) returns
+     *  null and isNewer therefore rejects it — keeps pre-release tags from
+     *  rolling out to the stable channel just because GitHub flagged one as
+     *  "latest". */
     private fun parseDescribe(s: String): Describe? {
-        val trimmed = s.removePrefix("v")
-        val firstDash = trimmed.indexOf('-')
-        val basePart: String
-        val ahead: Int
-        if (firstDash < 0) {
-            basePart = trimmed
-            ahead = 0
-        } else {
-            basePart = trimmed.substring(0, firstDash)
-            // Tail is "3-gabc" or just "3" — first dash-delimited token must
-            // parse as a non-negative int (the commit count past the tag).
-            val tail = trimmed.substring(firstDash + 1)
-            val nextDash = tail.indexOf('-')
-            val countStr = if (nextDash < 0) tail else tail.substring(0, nextDash)
-            ahead = countStr.toIntOrNull()?.takeIf { it >= 0 } ?: return null
-        }
+        // Either clean semver "1.2.3" or git-describe "1.2.3-N-gHEX". Hex
+        // length isn't fixed (git uses 7+ chars but can be longer with
+        // --abbrev), so we accept any non-empty run of [0-9a-fA-F].
+        val match = DESCRIBE_REGEX.matchEntire(s.removePrefix("v")) ?: return null
+        val basePart = match.groupValues[1]
+        val aheadStr = match.groupValues[2]
+        val ahead = if (aheadStr.isEmpty()) 0 else aheadStr.toIntOrNull() ?: return null
         val ints = basePart.split(".").map { it.toIntOrNull() ?: return null }
         if (ints.isEmpty()) return null
         return Describe(ints.toIntArray(), ahead)
     }
+
+    private val DESCRIBE_REGEX = Regex("""^(\d+(?:\.\d+)*)(?:-(\d+)-g[0-9a-fA-F]+)?$""")
 }

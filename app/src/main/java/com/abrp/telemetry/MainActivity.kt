@@ -323,10 +323,15 @@ class MainActivity : AppCompatActivity() {
         binding.swAutoUpdate.setOnCheckedChangeListener { _, isChecked ->
             getSharedPreferences("abrp_prefs", Context.MODE_PRIVATE)
                 .edit().putBoolean("auto_update", isChecked).apply()
-            // Mirror to the JSON backup. savePreferences would also drag the token
-            // and car model in, which we don't need here — just patch the flag.
-            val existing = SettingsStore.resolve(this)
-            SettingsStore.write(existing.copy(autoUpdate = isChecked))
+            // Mirror to the JSON backup off the UI thread — SettingsStore.resolve
+            // reads SharedPreferences AND possibly /data/local/tmp, and write()
+            // touches /data/local/tmp; both are disk I/O and StrictMode-grade
+            // ANR risk on a contended head-unit FS.
+            val ctx = applicationContext
+            Thread {
+                val existing = SettingsStore.resolve(ctx)
+                SettingsStore.write(existing.copy(autoUpdate = isChecked))
+            }.start()
             // Flipping the toggle on counts as a manual trigger — bypass the
             // 24h cooldown so the check runs immediately.
             if (isChecked) triggerUpdateCheck(force = true)

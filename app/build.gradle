@@ -18,12 +18,28 @@ def gitVersionName = {
 // versionCode = HEAD commit's unix timestamp. Monotonic between any two commits
 // in time, which is the only thing pm install -r cares about. Local builds and
 // CI builds at the same commit produce the same versionCode (reproducible).
+//
+// Fails loudly rather than falling back to versionCode=1 — a silent fallback
+// would produce APKs that pm install -r rejects as downgrades against any
+// previously-deployed build, with no clue why. If you're building somewhere
+// without git, pass -PversionCode=<int> explicitly.
 def gitCommitTime = {
+    def out = new ByteArrayOutputStream()
     try {
-        def out = new ByteArrayOutputStream()
         exec { commandLine 'git', 'log', '-1', '--format=%ct'; standardOutput = out }
-        Integer.parseInt(out.toString().trim())
-    } catch (ignored) { 1 }
+    } catch (e) {
+        throw new GradleException("versionCode: git log failed (${e.message}). " +
+            "Pass -PversionCode=<int> explicitly when building without git.")
+    }
+    long t = Long.parseLong(out.toString().trim())
+    if (t > Integer.MAX_VALUE) {
+        // Post-2038 commit timestamps don't fit in an int (Android versionCode is
+        // a signed int). When that happens, the project needs a new scheme.
+        throw new GradleException("versionCode: commit timestamp $t exceeds " +
+            "Integer.MAX_VALUE (post-2038-01-19). Switch versionCode scheme or " +
+            "pass -PversionCode=<int> explicitly.")
+    }
+    (int) t
 }
 
 android {
