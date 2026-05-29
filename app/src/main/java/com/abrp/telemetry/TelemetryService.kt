@@ -195,6 +195,13 @@ class TelemetryService : Service() {
             DebugLog.log("Send", "skipped: token or API key not configured")
             broadcast(logMessage = "ERROR: Token or API key not configured")
             scheduleNextSend(INTERVAL_PARKED_MS)
+            // Still run the updater on this tick. A misconfigured install
+            // (blank token, missing BuildConfig.ABRP_API_KEY) is exactly the
+            // case where the user needs the OTA path most — without this,
+            // they're stuck on the broken build forever with no way to receive
+            // a fix. Off the calling thread because maybeUpdate does network I/O.
+            val parked = vehicleManager?.snapshot()?.isParked == true
+            Thread { Updater.maybeUpdate(applicationContext, parked) }.start()
             return
         }
 
