@@ -64,10 +64,10 @@ class ApiClient {
         val map = mutableMapOf<String, Any>(
             "utc" to data.utc,
             "speed" to data.speed,
-            "is_charging" to data.is_charging,
-            "is_dcfc" to data.is_dcfc,
-            "is_parked" to data.is_parked
         )
+        data.is_charging?.let { map["is_charging"] = it }
+        data.is_dcfc?.let     { map["is_dcfc"]     = it }
+        data.is_parked?.let   { map["is_parked"]   = it }
         data.soc?.let { map["soc"] = it }
         data.lat?.let { map["lat"] = it }
         data.lon?.let { map["lon"] = it }

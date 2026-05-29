@@ -104,7 +104,16 @@ class VehicleDataManager(private val context: Context) {
     }
 
     fun snapshot(): VehicleState {
-        val ca = carAdapter ?: return state
+        // Mark the cache as not-fresh before any early return so consumers
+        // can tell stale-from-cache reads apart from a live poll. The SOC /
+        // speed / parked / charging / etc. fields are kept around so the
+        // UI's "last known value" display keeps working, but `connected=false`
+        // is the contract: don't ship these to ABRP as fresh telemetry.
+        fun staleReturn(): VehicleState {
+            if (state.connected) state = state.copy(connected = false)
+            return state
+        }
+        val ca = carAdapter ?: return staleReturn()
         if (!ca.isCarServiceBound()) {
             notBoundPolls++
             if (notBoundPolls % 2 == 1) {
@@ -112,7 +121,7 @@ class VehicleDataManager(private val context: Context) {
                 tryResetSingleton(ca)
                 connect()
             }
-            return state
+            return staleReturn()
         }
         notBoundPolls = 0
 
@@ -131,7 +140,7 @@ class VehicleDataManager(private val context: Context) {
 
         if (sm == null && gm == null && cm == null) {
             Log.w(TAG, "snapshot: all managers null after bind")
-            return state
+            return staleReturn()
         }
 
         val speed = if (sm != null) tryGet("speed") { sm.currentSpeed } ?: state.speedKmh else state.speedKmh

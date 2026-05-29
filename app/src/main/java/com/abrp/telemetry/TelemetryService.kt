@@ -282,21 +282,27 @@ class TelemetryService : Service() {
         carModel: String?,
     ): TelemetryData {
         val hasGps = loc != null && !(loc.latitude == 0.0 && loc.longitude == 0.0)
+        // Only treat vehicle fields as ship-worthy when the binder is currently
+        // connected. With a disconnected (or never-connected) manager, snapshot()
+        // returns a stale cache marked connected=false — sending soc/parked/etc.
+        // from that cache as a fresh ABRP frame would plot the car as actively
+        // driving against last-known-good values. GPS works either way.
+        val vc = v?.takeIf { it.connected }
         return TelemetryData(
             utc      = System.currentTimeMillis() / 1000,
-            soc      = v?.socPercent?.toDouble()?.takeIf { it > 0.0 },
-            speed    = v?.speedKmh?.toDouble() ?: ((loc?.speed ?: 0f) * 3.6).toDouble(),
+            soc      = vc?.socPercent?.toDouble()?.takeIf { it > 0.0 },
+            speed    = vc?.speedKmh?.toDouble() ?: ((loc?.speed ?: 0f) * 3.6).toDouble(),
             lat      = if (hasGps) loc!!.latitude  else null,
             lon      = if (hasGps) loc!!.longitude else null,
-            is_charging = if (v?.isCharging == true) 1 else 0,
-            is_dcfc     = if (v?.isDcfc == true)     1 else 0,
-            is_parked   = if (v?.isParked == true)   1 else 0,
+            is_charging = vc?.let { if (it.isCharging) 1 else 0 },
+            is_dcfc     = vc?.let { if (it.isDcfc)     1 else 0 },
+            is_parked   = vc?.let { if (it.isParked)   1 else 0 },
             elevation = loc?.altitude?.takeIf { it != 0.0 },
             heading   = loc?.bearing?.toDouble()?.takeIf { it != 0.0 },
-            ext_temp  = v?.outsideTempC?.toDouble(),
-            power     = v?.chargeRateKw?.toDouble()?.takeIf { it > 0.0 }
-                ?.let { if (v.isCharging) -it else it },
-            est_battery_range = v?.rangeKm?.takeIf { it > 0 }?.toDouble(),
+            ext_temp  = vc?.outsideTempC?.toDouble(),
+            power     = vc?.chargeRateKw?.toDouble()?.takeIf { it > 0.0 }
+                ?.let { if (vc.isCharging) -it else it },
+            est_battery_range = vc?.rangeKm?.takeIf { it > 0 }?.toDouble(),
             car_model = carModel,
         )
     }

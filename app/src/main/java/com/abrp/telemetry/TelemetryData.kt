@@ -6,9 +6,12 @@ data class TelemetryData(
     val speed: Double,
     val lat: Double? = null,
     val lon: Double? = null,
-    val is_charging: Int,
-    val is_dcfc: Int,
-    val is_parked: Int,
+    // Nullable so we can omit them when we don't have fresh vehicle data —
+    // sending is_parked=0 because the binder happens to be reconnecting is
+    // actively wrong (ABRP plots the car as actively driving).
+    val is_charging: Int? = null,
+    val is_dcfc: Int? = null,
+    val is_parked: Int? = null,
     val elevation: Double? = null,
     val heading: Double? = null,
     val soh: Double? = null,
